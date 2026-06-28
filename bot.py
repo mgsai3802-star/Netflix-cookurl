@@ -15,8 +15,8 @@ if not BOT_TOKEN:
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# User List သိမ်းမည့်ဖိုင် နှင့် Admin ID
-USER_FILE = "users.txt"
+# အသုံးပြုသူစာရင်းကို Memory ထဲမှာပဲ သိမ်းဆည်းမည် (File မသုံးပါ)
+active_users = {}
 ADMIN_ID = 1847021130
 
 @app.route('/')
@@ -27,21 +27,17 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# Keyboard Menu ဖန်တီးသည့် Function (Start ခလုတ်သာ ကျန်ရှိသည်)
+# Keyboard Menu
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     markup.add(types.KeyboardButton("/start 🔄"))
     return markup
 
-# User မှတ်သားခြင်း
+# User မှတ်သားခြင်း (Memory ထဲတွင်သာ)
 def log_user(message):
     user_id = str(message.chat.id)
     username = message.from_user.username or message.from_user.first_name or "Unknown"
-    if os.path.exists(USER_FILE):
-        with open(USER_FILE, "r", encoding="utf-8") as f:
-            if user_id in f.read(): return
-    with open(USER_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{user_id}|{username}\n")
+    active_users[user_id] = username
 
 # Commands
 @bot.message_handler(commands=['start'])
@@ -54,11 +50,17 @@ def show_users(message):
     if message.chat.id != ADMIN_ID:
         bot.reply_to(message, "Admin သာ အသုံးပြုနိုင်ပါတယ် ခင်ဗျာ။")
         return
-    if os.path.exists(USER_FILE):
-        with open(USER_FILE, "rb") as f:
-            bot.send_document(message.chat.id, f, caption="အသုံးပြုသူစာရင်း")
-    else:
-        bot.reply_to(message, "စာရင်းမရှိသေးပါ")
+    
+    if not active_users:
+        bot.reply_to(message, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
+        return
+    
+    # Memory ထဲက စာရင်းကို ပြန်ထုတ်ပြခြင်း
+    user_list_text = f"👥 စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး\n\n"
+    for uid, uname in active_users.items():
+        user_list_text += f"▪️ {uname} (ID: `{uid}`)\n"
+    
+    bot.reply_to(message, user_list_text, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda message: message.text == "/start 🔄")
 def refresh_bot(message):
@@ -81,12 +83,15 @@ def process_document(message):
             match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', result.stdout)
             
             if match:
-                reply = f"ရပါပြီ ခင်ဗျာ:\n\n{match.group(1)}\n\n⚠️ **သတိပေးချက်** - ဒီလင့်ခ်က ခဏသာ အသုံးပြုလို့ရမှာ ဖြစ်ပါတယ် ခင်ဗျာ။"
+                clean_url = match.group(1)
+                reply = f"ရပါပြီ ခင်ဗျာ:\n\n{clean_url}\n\n⚠️ **သတိပေးချက်** - ဒီလင့်ခ်က ခဏသာ အသုံးပြုလို့ရမှာ ဖြစ်ပါတယ် ခင်ဗျာ။"
                 bot.send_message(message.chat.id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
             else:
-                bot.reply_to(message, "Token ရှာမတွေ့ပါ ခင်ဗျာ။")
+                bot.reply_to(message, "Token ရှာမတွေ့ပါ ခင်ဗျာ။", reply_markup=get_main_menu())
+                
+            if os.path.exists("input.txt"): os.remove("input.txt")
         except Exception as e:
-            bot.reply_to(message, f"Error ဖြစ်သွားပါတယ် ခင်ဗျာ: {e}")
+            bot.reply_to(message, f"Error ဖြစ်သွားပါတယ် ခင်ဗျာ: {e}", reply_markup=get_main_menu())
     else:
         bot.reply_to(message, ".txt ဖိုင်ကိုသာ လက်ခံပါတယ် ခင်ဗျာ။", reply_markup=get_main_menu())
 
@@ -94,5 +99,4 @@ if __name__ == "__main__":
     Thread(target=run_web).start()
     print("Bot စတင် အလုပ်လုပ်နေပါပြီ...")
     bot.infinity_polling()
-
-
+    
