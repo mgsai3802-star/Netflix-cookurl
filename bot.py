@@ -1,6 +1,8 @@
 import telebot
+from telebot import types # Keyboard အတွက် ထပ်ထည့်ထားသည်
 import subprocess
 import os
+import re
 from flask import Flask
 from threading import Thread
 
@@ -22,15 +24,27 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
+# Keyboard Menu ဖန်တီးသည့် Function
+def get_main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    btn_rar = types.KeyboardButton("📦 RAR ကို TXT ပြောင်းရန်")
+    markup.add(btn_rar)
+    return markup
+
 # /start နှိပ်လျှင် ပြမည့်စာ
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "မင်္ဂလာပါ ခင်ဗျာ။ Netflix Cookie ပါဝင်တဲ့ .txt ဖိုင်ကို ပေးပို့နိုင်ပါတယ်။")
+    bot.reply_to(message, "မင်္ဂလာပါ ခင်ဗျာ။ Netflix Cookie ပါဝင်တဲ့ .txt ဖိုင်ကို ပေးပို့နိုင်ပါတယ်။", reply_markup=get_main_menu())
+
+# Keyboard က Menu ကို နှိပ်လျှင် အလုပ်လုပ်မည့်အပိုင်း
+@bot.message_handler(func=lambda message: message.text == "📦 RAR ကို TXT ပြောင်းရန်")
+def handle_rar_menu(message):
+    bot.reply_to(message, "RAR ဖိုင်ကို ပေးပို့နိုင်ပါတယ် ခင်ဗျာ။\n\n(မှတ်ချက် - လောလောဆယ် Menu Button အနေနဲ့ ထည့်ပေးထားခြင်းဖြစ်ပြီး၊ RAR ဖိုင်ကို တကယ် ဖြည်ချဖို့အတွက် Code ထပ်မံရေးသားရန် လိုအပ်ပါသေးသည် ခင်ဗျာ။)")
 
 # စာရိုက်ပို့လျှင် .txt ဖြင့်ပို့ရန် အသိပေးမည်
 @bot.message_handler(content_types=['text'])
 def process_text(message):
-    bot.reply_to(message, "Cookie က အရှည်ကြီးဖြစ်နေရင် Telegram က ဖြတ်ပစ်တတ်လို့ပါ။ ကျေးဇူးပြု၍ .txt ဖိုင်လေးနဲ့ ပို့ပေးပါ ခင်ဗျာ။")
+    bot.reply_to(message, "Cookie က အရှည်ကြီးဖြစ်နေရင် Telegram က ဖြတ်ပစ်တတ်လို့ပါ။ ကျေးဇူးပြု၍ .txt ဖိုင်လေးနဲ့ ပို့ပေးပါ ခင်ဗျာ။", reply_markup=get_main_menu())
 
 # Document (.txt) ဖိုင်ကို လက်ခံမည့်အပိုင်း
 @bot.message_handler(content_types=['document'])
@@ -50,24 +64,26 @@ def process_document(message):
             result = subprocess.run(['python3', 'nf-token-generator.py'], capture_output=True, text=True)
             output_text = result.stdout
             
-            # ထွက်လာတဲ့ ရလဒ်ကို token_result.txt အနေနဲ့ ပြန်သိမ်းမယ်
-            with open("token_result.txt", "w", encoding="utf-8") as out_file:
-                out_file.write(output_text)
+            # Regex အသုံးပြု၍ https://netflix.com/?nftoken= ဖြင့်စသော လင့်ခ်ကိုသာ ဆွဲထုတ်မည်
+            match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', output_text)
+            
+            if match:
+                clean_url = match.group(1)
                 
-            # ထွက်လာတဲ့ ဖိုင်ကို User ဆီ ပြန်ပို့မယ်
-            with open("token_result.txt", "rb") as out_file:
-                bot.send_document(message.chat.id, out_file, caption="ရပါပြီ ခင်ဗျာ။")
+                # လင့်ခ်အောက်တွင် သတိပေးချက်စာသား ထည့်သွင်းခြင်း
+                reply_message = f"ရပါပြီ ခင်ဗျာ:\n\n`{clean_url}`\n\n⚠️ **သတိပေးချက်** - ဒီလင့်ခ်က ခဏသာ အသုံးပြုလို့ရမှာ ဖြစ်ပါတယ် ခင်ဗျာ။"
+                
+                bot.send_message(message.chat.id, reply_message, parse_mode='Markdown', reply_markup=get_main_menu())
+            else:
+                bot.send_message(message.chat.id, "Token URL ရှာမတွေ့ပါ ခင်ဗျာ။ Cookie ကို ပြန်စစ်ဆေးပေးပါ။", reply_markup=get_main_menu())
                 
         except Exception as e:
-            bot.reply_to(message, f"Error ဖြစ်သွားပါတယ် ခင်ဗျာ: {e}")
+            bot.reply_to(message, f"Error ဖြစ်သွားပါတယ် ခင်ဗျာ: {e}", reply_markup=get_main_menu())
     else:
-        bot.reply_to(message, ".txt ဖိုင်အမျိုးအစားသာ လက်ခံပါတယ် ခင်ဗျာ။")
+        bot.reply_to(message, ".txt ဖိုင်အမျိုးအစားသာ လက်ခံပါတယ် ခင်ဗျာ။", reply_markup=get_main_menu())
 
 if __name__ == "__main__":
-    # Web Server ကို Thread သီးသန့်ဖြင့် အရင် Run ပါမယ်
     Thread(target=run_web).start()
-    
-    # ပြီးမှ Bot ကို Run ပါမယ်
     print("Bot စတင် အလုပ်လုပ်နေပါပြီ...")
     bot.infinity_polling()
-    
+
