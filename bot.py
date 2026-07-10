@@ -123,7 +123,10 @@ def process_document(message):
                             cr_token = match.group(1)
                             reply = f"✅ **Crunchyroll Access Token ရပါပြီ:**\n\n`{cr_token}`\n\n⚠️**သတိပေးချက်** - ဒီလင့်ခ်က အချိန် 15 minutes ခန့်သာအသုံးပြုလို့ရမှာ ဖြစ်ပါတယ်ဗျ"
                         else:
-                            reply = "❌ Crunchyroll Token ထုတ်ယူလို့ မရပါဘူး ခင်ဗျာ။"
+                            # ⚠️ ဒီနေရာလေးကို ပြင်လိုက်တာပါ (Error အတိအကျကို ပြခိုင်းထားပါသည်)
+                            error_log = result.stdout.strip()
+                            stderr_log = result.stderr.strip()
+                            reply = f"❌ Crunchyroll Token ထုတ်ယူလို့ မရပါဘူး ခင်ဗျာ။\n\n**အကြောင်းရင်း (Debug Log):**\n`{error_log}`\n`{stderr_log}`"
                             
                     else:
                         reply = "❌ မှားယွင်းနေသော ဖိုင်ဖြစ်ပါသည်။ Netflix သို့မဟုတ် Crunchyroll Cookie ဖိုင်ကိုသာ ပေးပို့ပါ။"
