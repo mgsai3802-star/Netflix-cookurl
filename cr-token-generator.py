@@ -10,9 +10,9 @@ PUBLIC_TOKEN = "d2piMV90YThta3Y3X2t4aHF6djc6MnlSWlg0Y0psX28yMzRqa2FNaXRTbXNLUVlG
 
 def extract_etp_rt(text):
     """
-    input.txt ထဲကနေ etp_rt ဆိုတဲ့ cookie တန်ဖိုးကို အမျိုးအစားပေါင်းစုံမှ ရှာထုတ်မည့်အပိုင်း
+    input.txt ထဲကနေ etp_rt ဆိုတဲ့ cookie တန်ဖိုးကို ရှာထုတ်မည့်အပိုင်း
     """
-    # 1. JSON Format ဖြင့် လာလျှင် စစ်ဆေးရန်
+    # 1. JSON Format ဖြင့် လာလျှင်
     try:
         cookies = json.loads(text)
         if isinstance(cookies, list):
@@ -20,17 +20,16 @@ def extract_etp_rt(text):
                 if cookie.get("name") == "etp_rt":
                     return cookie.get("value")
     except json.JSONDecodeError:
-        pass # JSON မဟုတ်လျှင် ကျော်သွားမည်
+        pass 
 
-    # 2. Netscape Format (Tab-separated) ဖြင့် လာလျှင် စစ်ဆေးရန်
+    # 2. Netscape Format ဖြင့် လာလျှင်
     for line in text.splitlines():
         if "etp_rt" in line:
             parts = line.strip().split("\t")
             if len(parts) >= 7 and parts[5] == "etp_rt":
                 return parts[6]
 
-    # 3. သာမန် String / Regex ဖြင့် ရှာရန် (Fallback)
-    # JSON ထဲမှာပဲဖြစ်ဖြစ် ရိုးရိုးစာသားထဲမှာပဲဖြစ်ဖြစ် ပါလာနိုင်တဲ့ etp_rt တန်ဖိုးကို ဖမ်းမည်
+    # 3. သာမန် String / Regex ဖြင့် ရှာရန်
     match = re.search(r'etp_rt=([^;,\s]+)', text)
     if match:
         return match.group(1)
@@ -43,27 +42,27 @@ def extract_etp_rt(text):
 
 def fetch_cr_token(etp_rt_value):
     """
-    etp_rt cookie ကိုသုံးပြီး Crunchyroll API ကနေ Access Token လှမ်းတောင်းမည်
+    etp_rt cookie ကိုသုံးပြီး Web API မှတဆင့် Token လှမ်းတောင်းမည်
     """
-    url = "https://beta-api.crunchyroll.com/auth/v1/token"
+    # ⚠️ အဓိက ပြင်ဆင်လိုက်သော နေရာ (URL ပြောင်းလိုက်ပါသည်)
+    url = "https://www.crunchyroll.com/auth/v1/token"
     
     headers = {
         "Authorization": f"Basic {PUBLIC_TOKEN}",
         "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent": "Crunchyroll/3.59.0 Android/13 okhttp/4.12.0",
         "Cookie": f"etp_rt={etp_rt_value}" 
     }
     
+    # ⚠️ Device Type ကို Web Browser ပုံစံ ပြောင်းလိုက်ပါသည်
     data = {
         "grant_type": "etp_rt_cookie",
         "device_id": str(uuid.uuid4()), 
-        "device_name": "RMX2170",
-        "device_type": "realme RMX2170"
+        "device_name": "Chrome on Windows",
+        "device_type": "Web Desktop"
     }
 
     response = requests.post(url, headers=headers, data=data)
     
-    # 403 သို့မဟုတ် တခြား Error တက်လျှင် အကြောင်းအရင်းကို သိနိုင်ရန်
     if response.status_code != 200:
         raise Exception(f"API Error - {response.status_code}: {response.text}")
         
