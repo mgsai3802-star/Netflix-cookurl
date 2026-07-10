@@ -2,6 +2,7 @@ import os
 import re
 import requests
 import uuid
+import json
 
 INPUT_FILE = "input.txt"
 # Crunchyroll App ရဲ့ PUBLIC_TOKEN
@@ -9,23 +10,40 @@ PUBLIC_TOKEN = "d2piMV90YThta3Y3X2t4aHF6djc6MnlSWlg0Y0psX28yMzRqa2FNaXRTbXNLUVlG
 
 def extract_etp_rt(text):
     """
-    input.txt ထဲကနေ etp_rt ဆိုတဲ့ cookie တန်ဖိုးကို ရှာထုတ်မယ့် function
+    input.txt ထဲကနေ etp_rt ဆိုတဲ့ cookie တန်ဖိုးကို အမျိုးအစားပေါင်းစုံမှ ရှာထုတ်မည့်အပိုင်း
     """
+    # 1. JSON Format ဖြင့် လာလျှင် စစ်ဆေးရန်
+    try:
+        cookies = json.loads(text)
+        if isinstance(cookies, list):
+            for cookie in cookies:
+                if cookie.get("name") == "etp_rt":
+                    return cookie.get("value")
+    except json.JSONDecodeError:
+        pass # JSON မဟုတ်လျှင် ကျော်သွားမည်
+
+    # 2. Netscape Format (Tab-separated) ဖြင့် လာလျှင် စစ်ဆေးရန်
+    for line in text.splitlines():
+        if "etp_rt" in line:
+            parts = line.strip().split("\t")
+            if len(parts) >= 7 and parts[5] == "etp_rt":
+                return parts[6]
+
+    # 3. သာမန် String / Regex ဖြင့် ရှာရန် (Fallback)
+    # JSON ထဲမှာပဲဖြစ်ဖြစ် ရိုးရိုးစာသားထဲမှာပဲဖြစ်ဖြစ် ပါလာနိုင်တဲ့ etp_rt တန်ဖိုးကို ဖမ်းမည်
     match = re.search(r'etp_rt=([^;,\s]+)', text)
     if match:
         return match.group(1)
-    
-    # Netscape format (Tab-separated) နဲ့လာရင် ရှာဖို့
-    for line in text.splitlines():
-        parts = line.strip().split("\t")
-        if len(parts) >= 7 and parts[5] == "etp_rt":
-            return parts[6]
-            
+        
+    match_json = re.search(r'"name"\s*:\s*"etp_rt"\s*,\s*"value"\s*:\s*"([^"]+)"', text)
+    if match_json:
+        return match_json.group(1)
+
     return None
 
 def fetch_cr_token(etp_rt_value):
     """
-    etp_rt cookie ကိုသုံးပြီး Crunchyroll API ကနေ Access Token လှမ်းတောင်းမယ့် function
+    etp_rt cookie ကိုသုံးပြီး Crunchyroll API ကနေ Access Token လှမ်းတောင်းမည်
     """
     url = "https://beta-api.crunchyroll.com/auth/v1/token"
     
@@ -33,19 +51,22 @@ def fetch_cr_token(etp_rt_value):
         "Authorization": f"Basic {PUBLIC_TOKEN}",
         "Content-Type": "application/x-www-form-urlencoded",
         "User-Agent": "Crunchyroll/3.59.0 Android/13 okhttp/4.12.0",
-        "Cookie": f"etp_rt={etp_rt_value}" # Cookie ကို Header မှာ ထည့်ပေးရပါတယ်
+        "Cookie": f"etp_rt={etp_rt_value}" 
     }
     
     data = {
-        "grant_type": "etp_rt_cookie", # Cookie ကနေ Token တောင်းတဲ့ Type ပါ
-        "device_id": str(uuid.uuid4()), # Random ID တစ်ခုထုတ်ပေးလိုက်တာပါ
+        "grant_type": "etp_rt_cookie",
+        "device_id": str(uuid.uuid4()), 
         "device_name": "RMX2170",
         "device_type": "realme RMX2170"
     }
 
     response = requests.post(url, headers=headers, data=data)
-    response.raise_for_status() # Error တက်ရင် ရပ်သွားအောင်လို့ပါ
     
+    # 403 သို့မဟုတ် တခြား Error တက်လျှင် အကြောင်းအရင်းကို သိနိုင်ရန်
+    if response.status_code != 200:
+        raise Exception(f"API Error - {response.status_code}: {response.text}")
+        
     return response.json()
 
 def main():
@@ -53,13 +74,13 @@ def main():
         print("input.txt မတွေ့ပါဘူး ခင်ဗျာ။")
         return
 
-    with open(INPUT_FILE, "r", encoding="utf-8") as f:
+    with open(INPUT_FILE, "r", encoding="utf-8", errors="ignore") as f:
         raw_cookie = f.read().strip()
 
     etp_rt_value = extract_etp_rt(raw_cookie)
     
     if not etp_rt_value:
-        print("etp_rt cookie ကို ရှာမတွေ့ပါဘူး ခင်ဗျာ။ Valid ဖြစ်တဲ့ Crunchyroll cookie ကို ထည့်ပေးပါ။")
+        print("Error: etp_rt cookie ကို ရှာမတွေ့ပါဘူး ခင်ဗျာ။ ဖိုင် Format မှားနေနိုင်ပါသည်။")
         return
 
     try:
@@ -69,11 +90,11 @@ def main():
         if access_token:
             print("Access Token ရရှိပါပြီ:")
             print("====================")
-            # Bot.py ထဲက Regex နဲ့ ဖမ်းဖို့အတွက် "Token: " ဆိုပြီး ထုတ်ပေးတာပါ
+            # Bot.py ကနေ ဖမ်းယူမည့် Token နေရာ
             print(f"Token: {access_token}") 
             print("====================")
         else:
-            print("Token ထုတ်ယူလို့ မရပါဘူး။ Response:", token_data)
+            print("Error: Token ထုတ်ယူလို့ မရပါဘူး။ Response:", token_data)
             
     except Exception as e:
         print(f"Error ဖြစ်သွားပါတယ် ခင်ဗျာ: {e}")
