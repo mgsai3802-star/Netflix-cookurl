@@ -1,17 +1,14 @@
 import os
 import re
-import requests
 import uuid
 import json
+# ရိုးရိုး requests အစား Cloudflare ကို ကျော်နိုင်သော curl_cffi ကို အသုံးပြုထားပါသည်
+from curl_cffi import requests 
 
 INPUT_FILE = "input.txt"
-# Crunchyroll App ရဲ့ PUBLIC_TOKEN
 PUBLIC_TOKEN = "d2piMV90YThta3Y3X2t4aHF6djc6MnlSWlg0Y0psX28yMzRqa2FNaXRTbXNLUVlGaUpQXzU="
 
 def extract_etp_rt(text):
-    """
-    input.txt ထဲကနေ etp_rt ဆိုတဲ့ cookie တန်ဖိုးကို ရှာထုတ်မည့်အပိုင်း
-    """
     # 1. JSON Format ဖြင့် လာလျှင်
     try:
         cookies = json.loads(text)
@@ -41,10 +38,6 @@ def extract_etp_rt(text):
     return None
 
 def fetch_cr_token(etp_rt_value):
-    """
-    etp_rt cookie ကိုသုံးပြီး Web API မှတဆင့် Token လှမ်းတောင်းမည်
-    """
-    # ⚠️ အဓိက ပြင်ဆင်လိုက်သော နေရာ (URL ပြောင်းလိုက်ပါသည်)
     url = "https://www.crunchyroll.com/auth/v1/token"
     
     headers = {
@@ -53,7 +46,6 @@ def fetch_cr_token(etp_rt_value):
         "Cookie": f"etp_rt={etp_rt_value}" 
     }
     
-    # ⚠️ Device Type ကို Web Browser ပုံစံ ပြောင်းလိုက်ပါသည်
     data = {
         "grant_type": "etp_rt_cookie",
         "device_id": str(uuid.uuid4()), 
@@ -61,7 +53,8 @@ def fetch_cr_token(etp_rt_value):
         "device_type": "Web Desktop"
     }
 
-    response = requests.post(url, headers=headers, data=data)
+    # impersonate="chrome" ထည့်ခြင်းဖြင့် Cloudflare ကို Browser အစစ်ဖြစ်ကြောင်း လှည့်စားမည်
+    response = requests.post(url, headers=headers, data=data, impersonate="chrome")
     
     if response.status_code != 200:
         raise Exception(f"API Error - {response.status_code}: {response.text}")
@@ -89,7 +82,6 @@ def main():
         if access_token:
             print("Access Token ရရှိပါပြီ:")
             print("====================")
-            # Bot.py ကနေ ဖမ်းယူမည့် Token နေရာ
             print(f"Token: {access_token}") 
             print("====================")
         else:
