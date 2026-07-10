@@ -2,4 +2,4 @@ pyTelegramBotAPI
 requests
 Flask
 rarfile
-
+curl-cffi
