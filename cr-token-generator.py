@@ -1,13 +1,12 @@
 import os
 import re
-import uuid
 import json
-from curl_cffi import requests # Cloudflare ကျော်ရန်
+from curl_cffi import requests # Cloudflare ကို ဆက်လက်ကျော်ဖြတ်ရန်
 
 INPUT_FILE = "input.txt"
 
-# ⚠️ အဓိက ပြင်ဆင်လိုက်သော နေရာ (Web Browser အတွက် မှန်ကန်သော PUBLIC_TOKEN အသစ်)
-PUBLIC_TOKEN = "bm9haWhkZXZtXzZpeWcwYThsMHE6"
+# ⚠️ အဓိက ပြင်ဆင်လိုက်သော နေရာ (လက်ရှိ အလုပ်လုပ်နေသော Web Client Token အစစ်)
+PUBLIC_TOKEN = "Y3Jfd2ViOg=="
 
 def extract_etp_rt(text):
     # 1. JSON Format ဖြင့် လာလျှင်
@@ -47,14 +46,12 @@ def fetch_cr_token(etp_rt_value):
         "Cookie": f"etp_rt={etp_rt_value}" 
     }
     
+    # etp_rt_cookie ကို တောင်းခံရန် (Device details မလိုတော့ပါ)
     data = {
-        "grant_type": "etp_rt_cookie",
-        "device_id": str(uuid.uuid4()), 
-        "device_name": "Chrome on Windows",
-        "device_type": "Web Desktop"
+        "grant_type": "etp_rt_cookie"
     }
 
-    # impersonate="chrome" ကို ဆက်ထားပါမည် (Cloudflare ကို ကျော်ရန်)
+    # impersonate="chrome" ဖြင့် Cloudflare လုံခြုံရေးကို ကျော်မည်
     response = requests.post(url, headers=headers, data=data, impersonate="chrome")
     
     if response.status_code != 200:
@@ -83,6 +80,7 @@ def main():
         if access_token:
             print("Access Token ရရှိပါပြီ:")
             print("====================")
+            # Bot.py ကနေ ဖမ်းယူမည့် Token နေရာ
             print(f"Token: {access_token}") 
             print("====================")
         else:
