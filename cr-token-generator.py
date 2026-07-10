@@ -2,11 +2,12 @@ import os
 import re
 import uuid
 import json
-# ရိုးရိုး requests အစား Cloudflare ကို ကျော်နိုင်သော curl_cffi ကို အသုံးပြုထားပါသည်
-from curl_cffi import requests 
+from curl_cffi import requests # Cloudflare ကျော်ရန်
 
 INPUT_FILE = "input.txt"
-PUBLIC_TOKEN = "d2piMV90YThta3Y3X2t4aHF6djc6MnlSWlg0Y0psX28yMzRqa2FNaXRTbXNLUVlGaUpQXzU="
+
+# ⚠️ အဓိက ပြင်ဆင်လိုက်သော နေရာ (Web Browser အတွက် မှန်ကန်သော PUBLIC_TOKEN အသစ်)
+PUBLIC_TOKEN = "bm9haWhkZXZtXzZpeWcwYThsMHE6"
 
 def extract_etp_rt(text):
     # 1. JSON Format ဖြင့် လာလျှင်
@@ -53,7 +54,7 @@ def fetch_cr_token(etp_rt_value):
         "device_type": "Web Desktop"
     }
 
-    # impersonate="chrome" ထည့်ခြင်းဖြင့် Cloudflare ကို Browser အစစ်ဖြစ်ကြောင်း လှည့်စားမည်
+    # impersonate="chrome" ကို ဆက်ထားပါမည် (Cloudflare ကို ကျော်ရန်)
     response = requests.post(url, headers=headers, data=data, impersonate="chrome")
     
     if response.status_code != 200:
