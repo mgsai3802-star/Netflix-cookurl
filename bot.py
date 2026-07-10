@@ -46,7 +46,12 @@ def log_user(message):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     log_user(message)
-    bot.reply_to(message, "မင်္ဂလာပါ ခင်ဗျာ။ Netflix Cookie ပါဝင်သော .txt ဖိုင်ကို ပေးပို့နိုင်ပါတယ်ဗျ", reply_markup=get_main_menu())
+    welcome_text = (
+        "မင်္ဂလာပါ ခင်ဗျာ။\n\n"
+        "**Netflix** သို့မဟုတ် **Crunchyroll** Cookie ပါဝင်သော `.txt` ဖိုင်ကို ပေးပို့နိုင်ပါတယ်ဗျ။\n"
+        "Bot မှ အလိုအလျောက် ခွဲခြားပြီး Token ပြောင်းပေးပါမည်။"
+    )
+    bot.reply_to(message, welcome_text, parse_mode="Markdown", reply_markup=get_main_menu())
 
 @bot.message_handler(commands=['users'])
 def show_users(message):
@@ -83,23 +88,47 @@ def process_document(message):
         def process_task():
             with file_lock: # တစ်ကြိမ်လျှင် ဖိုင်တစ်ခုသာ အလုပ်လုပ်ရန် သော့ခတ်ထားမည်
                 try:
-                    bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text="TXT ကို စတင်လုပ်ဆောင်နေပါပြီ။ Token ထုတ်ပေးနေပါသည်...")
+                    bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text="TXT ကို စတင်လုပ်ဆောင်နေပါပြီ။ ဖိုင်အမျိုးအစားကို စစ်ဆေးနေပါသည်...")
                     
                     file_info = bot.get_file(message.document.file_id)
                     downloaded_file = bot.download_file(file_info.file_path)
                     
+                    # ဖိုင်ထဲက စာသားများကို ဖတ်ပြီး ဘာ Cookie လဲ ခွဲခြားမည်
+                    file_content = downloaded_file.decode('utf-8', errors='ignore')
+                    
                     with open("input.txt", "wb") as f: 
                         f.write(downloaded_file)
                     
-                    result = subprocess.run(['python3', 'nf-token-generator.py'], capture_output=True, text=True)
-                    match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', result.stdout)
-                    
-                    if match:
-                        clean_url = match.group(1)
-                        reply = f"ရပါပြီ ခင်ဗျာ:\n\n{clean_url}\n\n⚠️ **သတိပေးချက်** - ဒီလင့်ခ်က အချိန် 15 minutes ခန့်သာအသုံးပြုလို့ရမှာ ဖြစ်ပါတယ်ဗျ"
-                        bot.send_message(message.chat.id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
+                    # Netflix ဖြစ်/မဖြစ် စစ်ဆေးခြင်း
+                    if "NetflixId" in file_content or ".netflix.com" in file_content:
+                        bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text="Netflix Cookie တွေ့ရှိပါသည်။ Token ထုတ်ပေးနေပါသည်...")
+                        
+                        result = subprocess.run(['python3', 'nf-token-generator.py'], capture_output=True, text=True)
+                        match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', result.stdout)
+                        
+                        if match:
+                            clean_url = match.group(1)
+                            reply = f"✅ **Netflix Token ရပါပြီ:**\n\n{clean_url}\n\n⚠️ **သတိပေးချက်** - ဒီလင့်ခ်က အချိန် 15 minutes ခန့်သာအသုံးပြုလို့ရမှာ ဖြစ်ပါတယ်ဗျ"
+                        else:
+                            reply = "❌ Netflix Token ရှာမတွေ့ပါ ခင်ဗျာ။"
+                            
+                    # Crunchyroll ဖြစ်/မဖြစ် စစ်ဆေးခြင်း
+                    elif "etp_rt" in file_content or ".crunchyroll.com" in file_content:
+                        bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text="Crunchyroll Cookie တွေ့ရှိပါသည်။ Token ထုတ်ပေးနေပါသည်...")
+                        
+                        result = subprocess.run(['python3', 'cr-token-generator.py'], capture_output=True, text=True)
+                        match = re.search(r'Token:\s*([a-zA-Z0-9_.-]+)', result.stdout)
+                        
+                        if match:
+                            cr_token = match.group(1)
+                            reply = f"✅ **Crunchyroll Access Token ရပါပြီ:**\n\n`{cr_token}`\n\n⚠️**သတိပေးချက်** - ဒီလင့်ခ်က အချိန် 15 minutes ခန့်သာအသုံးပြုလို့ရမှာ ဖြစ်ပါတယ်ဗျ"
+                        else:
+                            reply = "❌ Crunchyroll Token ထုတ်ယူလို့ မရပါဘူး ခင်ဗျာ။"
+                            
                     else:
-                        bot.send_message(message.chat.id, "Token ရှာမတွေ့ပါ ခင်ဗျာ။", reply_markup=get_main_menu())
+                        reply = "❌ မှားယွင်းနေသော ဖိုင်ဖြစ်ပါသည်။ Netflix သို့မဟုတ် Crunchyroll Cookie ဖိုင်ကိုသာ ပေးပို့ပါ။"
+                        
+                    bot.send_message(message.chat.id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
                         
                     if os.path.exists("input.txt"): 
                         os.remove("input.txt")
@@ -117,5 +146,3 @@ if __name__ == "__main__":
     Thread(target=run_web).start()
     print("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ်ဖြင့်)...")
     bot.infinity_polling()
-
-
