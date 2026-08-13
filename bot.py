@@ -15,7 +15,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 file_lock = Lock()
 active_users = {}
-ADMIN_ID = 1847021130
+ADMIN_ID = 1847021130 # Admin ID နေရာတွင် သင်၏ ID ကို ထည့်ပါ
 
 @app.route('/')
 def alive():
@@ -60,22 +60,25 @@ def fix_cookie_format(text):
 
 # Data Processing Logic
 def process_cookie_data(message, cookie_data, progress_msg, is_text=False):
+    
+    # ⚠️ ဤနေရာတွင် Scope Error မဖြစ်စေရန် Data ကို final_data ဟု နာမည်သစ်ပေးထားပါသည်
+    if is_text and isinstance(cookie_data, str):
+        final_data = fix_cookie_format(cookie_data)
+    else:
+        final_data = cookie_data
+
     def process_task():
         with file_lock: 
             try:
                 bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text="စတင်လုပ်ဆောင်နေပါပြီ။ Token ထုတ်ပေးနေပါသည်...")
                 
                 # Bytes (File) လား၊ String (Text) လား ခွဲခြားပြီး input.txt ထဲ ရေးမည်
-                if isinstance(cookie_data, bytes):
+                if isinstance(final_data, bytes):
                     with open("input.txt", "wb") as f: 
-                        f.write(cookie_data)
+                        f.write(final_data)
                 else:
-                    # Text ဆိုလျှင် Format ပျက်နေပါက ပြန်ပြင်ပြီးမှ txt အဖြစ် save မည်
-                    if is_text:
-                        cookie_data = fix_cookie_format(cookie_data)
-                        
                     with open("input.txt", "w", encoding="utf-8") as f: 
-                        f.write(cookie_data + "\n")
+                        f.write(final_data + "\n")
                 
                 result = subprocess.run(['python3', 'nf-token-generator.py'], capture_output=True, text=True)
                 match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', result.stdout)
@@ -116,6 +119,7 @@ def process_text_message(message):
 
     log_user(message)
     
+    # Telegram ၏ စာလုံးရေကန့်သတ်ချက်ကြောင့် စာပြတ်သွားနိုင်ပါက သတိပေးမည်
     if len(message.text) >= 4000:
         bot.reply_to(message, "⚠️ သတိပေးချက်: Cookie စာသားသည် အလွန်ရှည်လျားသဖြင့် Telegram မှ အောက်ပိုင်းကို ဖြတ်ချလိုက်ဖွယ်ရှိပါသည်။ အဆင်မပြေပါက .txt ဖိုင်ဖြင့်သာ ပေးပို့ပါ ခင်ဗျာ။")
 
