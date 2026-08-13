@@ -6,7 +6,6 @@ import re
 from flask import Flask
 from threading import Thread, Lock
 
-# Token ဖတ်မည့်အပိုင်း
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 if not BOT_TOKEN:
     print("Error: BOT_TOKEN ကို Environment Variable မှာ ထည့်သွင်းရသေးပါ ခင်ဗျာ။")
@@ -14,11 +13,7 @@ if not BOT_TOKEN:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
-
-# ပြိုင်တူဖိုင်တွေ/စာသားတွေဝင်လာရင် တစ်ခုပြီးမှတစ်ခု အလုပ်လုပ်ရန် Lock
 file_lock = Lock()
-
-# အသုံးပြုသူစာရင်းကို Memory ထဲမှာပဲ သိမ်းဆည်းမည် (File မသုံးပါ)
 active_users = {}
 ADMIN_ID = 1847021130
 
@@ -30,49 +25,43 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# Keyboard Menu
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
     markup.add(types.KeyboardButton("/start 🔄"))
     return markup
 
-# User မှတ်သားခြင်း (Memory ထဲတွင်သာ)
 def log_user(message):
     user_id = str(message.chat.id)
     username = message.from_user.username or message.from_user.first_name or "Unknown"
     active_users[user_id] = username
 
-# Commands
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     log_user(message)
     bot.reply_to(message, "မင်္ဂလာပါ ခင်ဗျာ။ Netflix Cookie ပါဝင်သော .txt ဖိုင် (သို့မဟုတ်) Cookie စာသားကို တိုက်ရိုက် ပေးပို့နိုင်ပါတယ်ဗျ", reply_markup=get_main_menu())
 
-@bot.message_handler(commands=['users'])
-def show_users(message):
-    if message.chat.id != ADMIN_ID:
-        bot.reply_to(message, "Admin သာ အသုံးပြုနိုင်ပါတယ် ခင်ဗျာ။")
-        return
-    
-    if not active_users:
-        bot.reply_to(message, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
-        return
-    
-    # Memory ထဲက စာရင်းကို ပြန်ထုတ်ပြခြင်း
-    user_list_text = f"👥 စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး\n\n"
-    for uid, uname in active_users.items():
-        user_list_text += f"▪️ {uname} (ID: `{uid}`)\n"
-    
-    bot.reply_to(message, user_list_text, parse_mode="Markdown")
+# --- စာသားပျက်သွားလျှင် Cookie Format (Tabs) ပြန်ပြင်ပေးမည့် Function ---
+def fix_cookie_format(text):
+    fixed_lines = []
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            fixed_lines.append(line)
+            continue
+        
+        # Space များကို Netscape Cookie ၏ Column ၇ ခုအတိုင်း Tab ဖြင့်ပြန်ခြားပေးမည်
+        parts = re.split(r'\s+', line, maxsplit=6)
+        if len(parts) == 7:
+            fixed_lines.append('\t'.join(parts))
+        else:
+            fixed_lines.append(line)
+            
+    return '\n'.join(fixed_lines)
 
-@bot.message_handler(func=lambda message: message.text == "/start 🔄")
-def refresh_bot(message):
-    send_welcome(message)
-
-# Data Processing Logic (File အတွက်ရော Text အတွက်ပါ အသုံးပြုရန်)
-def process_cookie_data(message, cookie_data, progress_msg):
+# Data Processing Logic
+def process_cookie_data(message, cookie_data, progress_msg, is_text=False):
     def process_task():
-        with file_lock: # တစ်ကြိမ်လျှင် တစ်ခုသာ အလုပ်လုပ်ရန် သော့ခတ်ထားမည်
+        with file_lock: 
             try:
                 bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text="စတင်လုပ်ဆောင်နေပါပြီ။ Token ထုတ်ပေးနေပါသည်...")
                 
@@ -81,8 +70,12 @@ def process_cookie_data(message, cookie_data, progress_msg):
                     with open("input.txt", "wb") as f: 
                         f.write(cookie_data)
                 else:
+                    # Text ဆိုလျှင် Format ပျက်နေပါက ပြန်ပြင်ပြီးမှ txt အဖြစ် save မည်
+                    if is_text:
+                        cookie_data = fix_cookie_format(cookie_data)
+                        
                     with open("input.txt", "w", encoding="utf-8") as f: 
-                        f.write(cookie_data)
+                        f.write(cookie_data + "\n")
                 
                 result = subprocess.run(['python3', 'nf-token-generator.py'], capture_output=True, text=True)
                 match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', result.stdout)
@@ -92,7 +85,7 @@ def process_cookie_data(message, cookie_data, progress_msg):
                     reply = f"ရပါပြီ ခင်ဗျာ:\n\n{clean_url}\n\n⚠️ **သတိပေးချက်** - ဒီလင့်ခ်က အချိန် 15 minutes ခန့်သာအသုံးပြုလို့ရမှာ ဖြစ်ပါတယ်ဗျ"
                     bot.send_message(message.chat.id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
                 else:
-                    bot.send_message(message.chat.id, "Token ရှာမတွေ့ပါ ခင်ဗျာ။", reply_markup=get_main_menu())
+                    bot.send_message(message.chat.id, "Token ရှာမတွေ့ပါ ခင်ဗျာ။ Cookie အလုပ်မလုပ်တော့တာ သို့မဟုတ် Format မှားနေတာ ဖြစ်နိုင်ပါတယ်။ (.txt ဖိုင်ဖြင့် ပေးပို့ကြည့်ရန် အကြံပြုပါသည်)", reply_markup=get_main_menu())
                     
                 if os.path.exists("input.txt"): 
                     os.remove("input.txt")
@@ -100,10 +93,8 @@ def process_cookie_data(message, cookie_data, progress_msg):
             except Exception as e:
                 bot.send_message(message.chat.id, f"Error ဖြစ်သွားပါတယ် ခင်ဗျာ: {e}", reply_markup=get_main_menu())
 
-    # တခြား User တွေ Bot ကို သုံးလို့ရနေအောင် Thread အသစ်နဲ့ အလုပ်လုပ်ခိုင်းမည်
     Thread(target=process_task).start()
 
-# Document (.txt) လက်ခံခြင်း
 @bot.message_handler(content_types=['document'])
 def process_document(message):
     log_user(message)
@@ -114,25 +105,25 @@ def process_document(message):
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         
-        process_cookie_data(message, downloaded_file, progress_msg)
+        process_cookie_data(message, downloaded_file, progress_msg, is_text=False)
     else:
         bot.reply_to(message, ".txt ဖိုင်ကိုသာ လက်ခံပါတယ် ခင်ဗျာ။", reply_markup=get_main_menu())
 
-# စာသား (Text) လက်ခံခြင်း
 @bot.message_handler(content_types=['text'])
 def process_text_message(message):
-    # Commands တွေကို ကျော်သွားရန်
     if message.text.startswith('/'):
         return
 
     log_user(message)
-    progress_msg = bot.reply_to(message, "စာသားလက်ခံရရှိပါပြီ။ တန်းစီနေပါသည် (Queue)...")
     
-    process_cookie_data(message, message.text, progress_msg)
+    if len(message.text) >= 4000:
+        bot.reply_to(message, "⚠️ သတိပေးချက်: Cookie စာသားသည် အလွန်ရှည်လျားသဖြင့် Telegram မှ အောက်ပိုင်းကို ဖြတ်ချလိုက်ဖွယ်ရှိပါသည်။ အဆင်မပြေပါက .txt ဖိုင်ဖြင့်သာ ပေးပို့ပါ ခင်ဗျာ။")
+
+    progress_msg = bot.reply_to(message, "စာသားလက်ခံရရှိပါပြီ။ တန်းစီနေပါသည် (Queue)...")
+    process_cookie_data(message, message.text, progress_msg, is_text=True)
 
 if __name__ == "__main__":
     Thread(target=run_web).start()
     print("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ်ဖြင့်)...")
     bot.infinity_polling()
-
-
+    
