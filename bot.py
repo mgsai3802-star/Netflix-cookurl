@@ -42,6 +42,45 @@ awaiting_broadcast = {}   # admin_id (str) -> True/False
 STOP_BTN = "⏹ ဟိုးစတော့"
 BROADCAST_CANCEL_BTN = "❌ Broadcast ပယ်ဖျက်"
 
+# Matches a Netscape cookie line whether it still has tabs, single
+# spaces, or NO separator at all between the path ("/...") and the
+# TRUE/FALSE secure flag (which is what happens when a phone keyboard
+# eats a tab character while pasting).
+COOKIE_LINE_RE = re.compile(
+    r'^(?P<domain>\S+)\s+'
+    r'(?P<flag1>TRUE|FALSE)\s+'
+    r'(?P<path>/\S*?)\s*(?=TRUE|FALSE)'
+    r'(?P<secure>TRUE|FALSE)\s+'
+    r'(?P<expiry>\d+)\s+'
+    r'(?P<name>\S+)\s+'
+    r'(?P<value>.*)$'
+)
+
+
+def normalize_cookie_text(raw_bytes: bytes) -> bytes:
+    """Rebuild proper TAB-separated Netscape cookie lines even if the
+    tabs got mangled by copy/paste (mobile keyboards often collapse or
+    drop TAB characters when text is pasted into a message box)."""
+    text = raw_bytes.decode('utf-8', errors='ignore')
+    fixed_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            fixed_lines.append(line)
+            continue
+        m = COOKIE_LINE_RE.match(stripped)
+        if m:
+            fixed_lines.append('\t'.join([
+                m.group('domain'), m.group('flag1'), m.group('path'),
+                m.group('secure'), m.group('expiry'),
+                m.group('name'), m.group('value')
+            ]))
+        else:
+            # Couldn't confidently fix it — keep as-is so we don't
+            # silently destroy content the parser could still handle.
+            fixed_lines.append(line)
+    return ('\n'.join(fixed_lines) + '\n').encode('utf-8')
+
 
 @app.route('/')
 def alive():
@@ -143,9 +182,8 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
         bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu())
         return
 
-    # NOTE: nf-token-generator.py always reads a fixed file called "input.txt"
-    # in its own working directory — it does NOT accept a filename argument.
-    # So we must always write to this exact name.
+    # nf-token-generator.py always reads a fixed file called "input.txt"
+    # in its own working directory.
     input_path = "input.txt"
 
     try:
@@ -157,8 +195,9 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
         if progress_msg_id:
             bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Token ပြန်ပေးမယ် စောင့်နေ.")
 
+        fixed_content = normalize_cookie_text(content_bytes)
         with open(input_path, "wb") as f:
-            f.write(content_bytes)
+            f.write(fixed_content)
 
         if stop_flags.get(user_id):
             bot.send_message(chat_id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
