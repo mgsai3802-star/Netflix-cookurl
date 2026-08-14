@@ -1,5 +1,6 @@
 import telebot
 import subprocess
+import sys
 import os
 import re
 import threading
@@ -16,7 +17,6 @@ app = Flask(__name__)
 file_lock = threading.Lock()
 ADMIN_ID = 1847021130
 
-# --- Pre-loaded existing users (so /users shows them even before they message again) ---
 active_users = {
     "1847021130": "Ren2512",
     "5786095389": "thureinlinlinn",
@@ -35,9 +35,12 @@ active_users = {
     "5272159743": "phetkyam",
 }
 
-# --- track running process + stop flag per user ---
 running_process = {}
 stop_flags = {}
+awaiting_broadcast = {}   # admin_id -> True/False
+
+STOP_BTN = "⏹ ဟိုးစတော့"
+BROADCAST_CANCEL_BTN = "❌ Broadcast ပယ်ဖျက်"
 
 
 @app.route('/')
@@ -54,8 +57,14 @@ def get_main_menu():
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
         telebot.types.KeyboardButton("/start 🔄"),
-        telebot.types.KeyboardButton("⏹ ဟိုးစတော့")
+        telebot.types.KeyboardButton(STOP_BTN)
     )
+    return markup
+
+
+def get_broadcast_menu():
+    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=1)
+    markup.add(telebot.types.KeyboardButton(BROADCAST_CANCEL_BTN))
     return markup
 
 
@@ -89,29 +98,107 @@ def show_users(message):
     bot.reply_to(message, user_list_text, parse_mode="Markdown")
 
 
+@bot.message_handler(commands=['broadcast'])
+def start_broadcast(message):
+    if message.chat.id != ADMIN_ID:
+        bot.reply_to(message, "ပိုင်ရှင်ရှိတယ်")
+        return
+    awaiting_broadcast[str(message.chat.id)] = True
+    bot.reply_to(
+        message,
+        "📢 Broadcast ပို့ချင်တဲ့ စာသားကို ရိုက်ပို့ပါ။\nမလုပ်တော့ဘူးဆိုရင် အောက်က ခလုတ်ကို နှိပ်ပါ။",
+        reply_markup=get_broadcast_menu()
+    )
+
+
+@bot.message_handler(func=lambda message: message.text == BROADCAST_CANCEL_BTN)
+def cancel_broadcast(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    awaiting_broadcast[str(message.chat.id)] = False
+    bot.reply_to(message, "❌ Broadcast ကို ပယ်ဖျက်လိုက်ပါပြီ။", reply_markup=get_main_menu())
+
+
 @bot.message_handler(func=lambda message: message.text == "/start 🔄")
 def refresh_bot(message):
     send_welcome(message)
 
 
-@bot.message_handler(func=lambda message: message.text == "⏹ ဟိုးစတော့")
+@bot.message_handler(func=lambda message: message.text == STOP_BTN)
 def stop_process(message):
     user_id = str(message.chat.id)
     proc = running_process.get(user_id)
     if proc and proc.poll() is None:
         stop_flags[user_id] = True
         proc.terminate()
-        bot.reply_to(
-            message,
-            "⏹ မလုပ်ပေးတော့ဘူးကွာ",
-            reply_markup=get_main_menu()
-        )
+        bot.reply_to(message, "⏹ မလုပ်ပေးတော့ဘူးကွာ", reply_markup=get_main_menu())
     else:
-        bot.reply_to(
-            message,
-            "ဘာပို့ထားလို့ ရပ်ခိုင်းနေတာလဲဟ",
-            reply_markup=get_main_menu()
+        bot.reply_to(message, "ဘာပို့ထားလို့ ရပ်ခိုင်းနေတာလဲဟ", reply_markup=get_main_menu())
+
+
+def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
+    """Shared logic for both document uploads and plain-text cookie submissions."""
+    acquired = file_lock.acquire(timeout=90)
+    if not acquired:
+        bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu())
+        return
+    input_path = f"input_{user_id}.txt"
+    try:
+        if stop_flags.get(user_id):
+            if progress_msg_id:
+                bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="⏹ မလုပ်ပေးတော့ဘူးကွာ")
+            return
+
+        if progress_msg_id:
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Token ပြန်ပေးမယ် စောင့်နေ.")
+
+        with open(input_path, "wb") as f:
+            f.write(content_bytes)
+
+        if stop_flags.get(user_id):
+            bot.send_message(chat_id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
+            return
+
+        proc = subprocess.Popen(
+            [sys.executable, 'nf-token-generator.py', input_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
+        running_process[user_id] = proc
+
+        try:
+            stdout, stderr = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            bot.send_message(chat_id, "⏱️ ကြာလွန်းလို့ ရပ်လိုက်ပြီ ထပ်ကြိုးစားပေးကွာ", reply_markup=get_main_menu())
+            return
+        finally:
+            running_process.pop(user_id, None)
+
+        if stop_flags.get(user_id):
+            bot.send_message(chat_id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
+            return
+
+        match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', stdout or "")
+        if match:
+            clean_url = match.group(1)
+            reply = (
+                f"ရပါပြီ ခင်ဗျာ:\n\n{clean_url}\n\n"
+                "⚠️ **သတိထား** - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်"
+            )
+            bot.send_message(chat_id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
+        else:
+            err_snippet = (stderr or "no stderr")[:500]
+            bot.send_message(chat_id, "Token မတွေ့ဘူး နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
+            bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး နောက်တစ်ခုစမ်း (user {user_id}):\n```\n{err_snippet}\n```", parse_mode="Markdown")
+
+    except Exception as e:
+        bot.send_message(chat_id, f"Error တက်ကုန်ပြီဟ: {e}", reply_markup=get_main_menu())
+    finally:
+        running_process.pop(user_id, None)
+        if os.path.exists(input_path):
+            os.remove(input_path)
+        file_lock.release()
 
 
 @bot.message_handler(content_types=['document'])
@@ -121,67 +208,54 @@ def process_document(message):
     stop_flags[user_id] = False
     file_name = message.document.file_name.lower()
 
-    if file_name.endswith('.txt'):
-        progress_msg = bot.reply_to(message, "ဖိုင်ငါရပြီ - အစဉ်လိုက်ပဲ‌သွားမယ်ကွ(Queue)...")
-
-        def process_task():
-            with file_lock:
-                try:
-                    if stop_flags.get(user_id):
-                        bot.edit_message_text(
-                            chat_id=message.chat.id, message_id=progress_msg.message_id,
-                            text="⏹ မလုပ်ပေးတော့ဘူးကွာ"
-                        )
-                        return
-
-                    bot.edit_message_text(
-                        chat_id=message.chat.id, message_id=progress_msg.message_id,
-                        text="TXT ရပြီ Token ပြန်ပေးမယ် စောင့်နေ."
-                    )
-
-                    file_info = bot.get_file(message.document.file_id)
-                    downloaded_file = bot.download_file(file_info.file_path)
-                    with open("input.txt", "wb") as f:
-                        f.write(downloaded_file)
-
-                    if stop_flags.get(user_id):
-                        bot.send_message(message.chat.id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
-                        return
-
-                    proc = subprocess.Popen(
-                        ['python3', 'nf-token-generator.py'],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-                    )
-                    running_process[user_id] = proc
-                    stdout, stderr = proc.communicate()
-                    running_process.pop(user_id, None)
-
-                    if stop_flags.get(user_id):
-                        bot.send_message(message.chat.id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
-                        return
-
-                    match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', stdout)
-                    if match:
-                        clean_url = match.group(1)
-                        reply = (
-                            f"ရပြီကွ သုံးတော့:\n\n{clean_url}\n\n"
-                            "⚠️ **သတိပေးချက်** - ဒီလင့်ခ်က 15 minutes မိ‌နစ်လောက်ပဲကွ"
-                        )
-                        bot.send_message(message.chat.id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
-                    else:
-                        bot.send_message(message.chat.id, "Token ရှာမတွေ့ဘူးဟ နောက်တစ်ခုစမ်းကွာ", reply_markup=get_main_menu())
-
-                    if os.path.exists("input.txt"):
-                        os.remove("input.txt")
-
-                except Exception as e:
-                    bot.send_message(message.chat.id, f"Error ဖြစ်နေပြီကွ: {e}", reply_markup=get_main_menu())
-                finally:
-                    running_process.pop(user_id, None)
-
-        Thread(target=process_task).start()
-    else:
+    if not file_name.endswith('.txt'):
         bot.reply_to(message, ".txt ဖိုင်ပဲပို့ဟ", reply_markup=get_main_menu())
+        return
+
+    progress_msg = bot.reply_to(message, "ဖိုင်ငါရပြီ - အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
+
+    def task():
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        run_generator_task(message.chat.id, user_id, downloaded_file, progress_msg.message_id)
+
+    Thread(target=task).start()
+
+
+# --- Handles plain text: broadcast content (admin) OR cookie text (normal user) ---
+@bot.message_handler(func=lambda message: message.content_type == 'text' and not message.text.startswith('/')
+                      and message.text not in ["/start 🔄", STOP_BTN, BROADCAST_CANCEL_BTN])
+def handle_text(message):
+    log_user(message)
+    chat_id = message.chat.id
+    user_id = str(chat_id)
+
+    # --- Admin sending a broadcast message ---
+    if chat_id == ADMIN_ID and awaiting_broadcast.get(user_id):
+        awaiting_broadcast[user_id] = False
+        broadcast_text = message.text
+        sent, failed = 0, 0
+        for uid in active_users.keys():
+            try:
+                bot.send_message(int(uid), broadcast_text)
+                sent += 1
+            except Exception:
+                failed += 1
+        bot.send_message(
+            chat_id,
+            f"📢 Broadcast ပို့ပြီးပါပြီ။\n✅ အောင်မြင်: {sent}\n❌ မအောင်မြင်: {failed}",
+            reply_markup=get_main_menu()
+        )
+        return
+
+    # --- Normal user: treat pasted text as the cookie content ---
+    stop_flags[user_id] = False
+    progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
+
+    def task():
+        run_generator_task(chat_id, user_id, message.text.encode('utf-8'), progress_msg.message_id)
+
+    Thread(target=task).start()
 
 
 if __name__ == "__main__":
