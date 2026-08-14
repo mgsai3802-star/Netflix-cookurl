@@ -37,7 +37,7 @@ active_users = {
 
 running_process = {}
 stop_flags = {}
-awaiting_broadcast = {}   # admin_id -> True/False
+awaiting_broadcast = {}   # admin_id (str) -> True/False
 
 STOP_BTN = "⏹ ဟိုးစတော့"
 BROADCAST_CANCEL_BTN = "❌ Broadcast ပယ်ဖျက်"
@@ -142,7 +142,12 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
     if not acquired:
         bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu())
         return
-    input_path = f"input_{user_id}.txt"
+
+    # NOTE: nf-token-generator.py always reads a fixed file called "input.txt"
+    # in its own working directory — it does NOT accept a filename argument.
+    # So we must always write to this exact name.
+    input_path = "input.txt"
+
     try:
         if stop_flags.get(user_id):
             if progress_msg_id:
@@ -160,7 +165,7 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
             return
 
         proc = subprocess.Popen(
-            [sys.executable, 'nf-token-generator.py', input_path],
+            [sys.executable, 'nf-token-generator.py'],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         running_process[user_id] = proc
@@ -183,14 +188,14 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
         if match:
             clean_url = match.group(1)
             reply = (
-                f"ရပါပြီ ခင်ဗျာ:\n\n{clean_url}\n\n"
+                f"ရပြီဟေ့:\n\n{clean_url}\n\n"
                 "⚠️ **သတိထား** - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်"
             )
             bot.send_message(chat_id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
         else:
             err_snippet = (stderr or "no stderr")[:500]
             bot.send_message(chat_id, "Token မတွေ့ဘူး နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
-            bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး နောက်တစ်ခုစမ်း (user {user_id}):\n```\n{err_snippet}\n```", parse_mode="Markdown")
+            bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id}):\n```\n{err_snippet}\n```", parse_mode="Markdown")
 
     except Exception as e:
         bot.send_message(chat_id, f"Error တက်ကုန်ပြီဟ: {e}", reply_markup=get_main_menu())
@@ -262,4 +267,4 @@ if __name__ == "__main__":
     Thread(target=run_web).start()
     print("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ်ဖြင့်)...")
     bot.infinity_polling()
-    
+
