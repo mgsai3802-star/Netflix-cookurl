@@ -232,7 +232,7 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
             )
             bot.send_message(chat_id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
         else:
-            err_snippet = (stderr or "no stderr")[:500]
+            err_snippet = (stderr or "Cookie ပျက်နေတယ်ထင်တယ် နောက်တစ်ခုစမ်းကွာ"[:500]
             bot.send_message(chat_id, "Token မတွေ့ဘူး နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
             bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id}):\n```\n{err_snippet}\n```", parse_mode="Markdown")
 
