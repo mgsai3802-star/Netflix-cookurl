@@ -227,12 +227,12 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
         if match:
             clean_url = match.group(1)
             reply = (
-                f"ရပြီဟေ့:\n\n{clean_url}\n\n"
+                f"ရပြီဝေ့:\n\n{clean_url}\n\n"
                 "⚠️ **သတိထား** - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်"
             )
             bot.send_message(chat_id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
         else:
-            err_snippet = (stderr or "Cookie ပျက်နေတယ်ထင်တယ် နောက်တစ်ခုစမ်းကွာ"[:500]
+            err_snippet = (stderr or "Cookie ပျက်နေတာထင်တယ် နောက်တစ်ခုစမ်းကွာ")[:500]
             bot.send_message(chat_id, "Token မတွေ့ဘူး နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
             bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id}):\n```\n{err_snippet}\n```", parse_mode="Markdown")
 
