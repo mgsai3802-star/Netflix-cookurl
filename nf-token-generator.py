@@ -72,6 +72,7 @@ REQUIRED_COOKIE = "NetflixId"
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
+
 def ensure_input_file():
     if not os.path.exists(INPUT_FILE):
         with open(INPUT_FILE, "w", encoding="utf-8") as file_handle:
@@ -90,11 +91,13 @@ def ensure_input_file():
 
     return content
 
+
 def parse_netscape_cookie_line(line):
     parts = line.strip().split("\t")
     if len(parts) >= 7:
         return {parts[5]: parts[6]}
     return {}
+
 
 def _decode_cookie_value(value):
     if isinstance(value, str) and "%" in value:
@@ -103,6 +106,7 @@ def _decode_cookie_value(value):
         except Exception:
             return value
     return value
+
 
 def extract_cookie_dict(text):
     cookie_dict = {}
@@ -146,8 +150,10 @@ def extract_cookie_dict(text):
 
     return cookie_dict
 
+
 def build_nftoken_link(token):
     return "https://netflix.com/?nftoken=" + token
+
 
 def fetch_nftoken(cookie_dict):
     netflix_id = cookie_dict.get(REQUIRED_COOKIE)
@@ -180,7 +186,22 @@ def fetch_nftoken(cookie_dict):
     if isinstance(expires, int) and len(str(expires)) == 13:
         expires //= 1000
 
+    # Subscription Inactive ဖြစ်နေခြင်း ("Restart Your Membership") ဟုတ်မဟုတ် စစ်ဆေးခြင်း
+    check_session = requests.get(
+        "https://www.netflix.com/browse",
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Cookie": f"NetflixId={netflix_id}; SecureNetflixId={cookie_dict.get('SecureNetflixId', '')}"
+        },
+        allow_redirects=True,
+        timeout=15
+    )
+
+    if "youraccount" in check_session.url or "signup" in check_session.url or "Restart Your Membership" in check_session.text:
+        raise ValueError("Inactive Account: Membership needs to be restarted.")
+
     return token, expires
+
 
 def format_expiry(expires):
     if not isinstance(expires, (int, float)):
@@ -189,6 +210,7 @@ def format_expiry(expires):
         return datetime.fromtimestamp(expires).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return str(expires)
+
 
 def main():
     print(WATERMARK)
@@ -219,5 +241,8 @@ def main():
         print()
         print(WATERMARK)
 
+
 if __name__ == "__main__":
     main()
+
+
