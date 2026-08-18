@@ -373,14 +373,18 @@ def handle_callback(call: types.CallbackQuery) -> None:
         return
 
     if call.data == "my_quota":
-        used, remaining = store.usage(user_id, current_date(), DAILY_LIMIT)
-        bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
+        if is_admin(user_id):
+            bot.send_message(chat_id, "👑 သင်ဟာ Admin ဖြစ်တဲ့အတွက် Quota အကန့်အသတ်မရှိ (Unlimited) သုံးနိုင်ပါတယ်။")
+        else:
+            used, remaining = store.usage(user_id, current_date(), DAILY_LIMIT)
+            bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
         return
 
     if call.data == "claim_link":
+        user_limit = 999999 if is_admin(user_id) else DAILY_LIMIT
         # Check user quota first
-        used, remaining = store.usage(user_id, current_date(), DAILY_LIMIT)
-        if used >= DAILY_LIMIT:
+        used, remaining = store.usage(user_id, current_date(), user_limit)
+        if used >= user_limit:
             bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{DAILY_LIMIT}</b> ခု ပြည့်သွားပြီကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ")
             return
 
@@ -422,11 +426,21 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     # If failed / Restart membership, loop will automatically pick the next file
 
                 if clean_url:
-                    # Record quota in database
                     store.add_links([clean_url], "pool_claimed")
-                    result = store.claim_link(user_id, current_date(), DAILY_LIMIT)
+                    result = store.claim_link(user_id, current_date(), user_limit)
                     
                     safe_url = html.escape(clean_url, quote=True)
+                    quota_info = "👑 <b>Admin Account (Unlimited)</b>" if is_admin(user_id) else f"ယနေ့ <b>{result.used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{result.remaining}</b> ခု ကျန်သေးတယ်ကွာ"
+
+                    bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=wait_msg.message_id,
+                        text=(
+                            f"ရပြီဝေ့:\n\n{safe_url}\n\n"
+                            f"⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n"
+                            f"{quota_info}"
+                        ),
+                        disable_web_page_preview=True)
                     bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=wait_msg.message_id,
