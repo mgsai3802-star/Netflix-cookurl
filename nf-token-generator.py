@@ -72,7 +72,6 @@ REQUIRED_COOKIE = "NetflixId"
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
 
-
 def ensure_input_file():
     if not os.path.exists(INPUT_FILE):
         with open(INPUT_FILE, "w", encoding="utf-8") as file_handle:
@@ -91,13 +90,11 @@ def ensure_input_file():
 
     return content
 
-
 def parse_netscape_cookie_line(line):
     parts = line.strip().split("\t")
     if len(parts) >= 7:
         return {parts[5]: parts[6]}
     return {}
-
 
 def _decode_cookie_value(value):
     if isinstance(value, str) and "%" in value:
@@ -106,7 +103,6 @@ def _decode_cookie_value(value):
         except Exception:
             return value
     return value
-
 
 def extract_cookie_dict(text):
     cookie_dict = {}
@@ -150,10 +146,8 @@ def extract_cookie_dict(text):
 
     return cookie_dict
 
-
 def build_nftoken_link(token):
     return "https://netflix.com/?nftoken=" + token
-
 
 def fetch_nftoken(cookie_dict):
     netflix_id = cookie_dict.get(REQUIRED_COOKIE)
@@ -188,7 +182,6 @@ def fetch_nftoken(cookie_dict):
 
     return token, expires
 
-
 def format_expiry(expires):
     if not isinstance(expires, (int, float)):
         return "Unknown"
@@ -196,7 +189,6 @@ def format_expiry(expires):
         return datetime.fromtimestamp(expires).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return str(expires)
-
 
 def main():
     print(WATERMARK)
@@ -226,7 +218,6 @@ def main():
     finally:
         print()
         print(WATERMARK)
-
 
 if __name__ == "__main__":
     main()
