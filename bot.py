@@ -1,4 +1,4 @@
-"""Combined Telegram bot for Bulk ZIP Cookie Token Generation, Storage Management, and User Blocking."""
+"""Combined Telegram bot for Bulk ZIP Cookie Token Generation, Storage Management, User Blocking, VIP System, and Admin Panel."""
 
 from __future__ import annotations
 
@@ -9,10 +9,11 @@ import sys
 import os
 import re
 import io
-import zipfile
+import zipfile as zip_lib
 import threading
 import html
 import logging
+import requests
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -52,8 +53,9 @@ active_users = {
     "5389816539": "Hiza2026",
 }
 
-# Blocked Users Set
+# Blocked Users & VIP Users Sets
 banned_users: set[str] = set()
+vip_users: set[str] = set()
 
 # Storage & Folders Configs
 BASE_DIR = Path(__file__).resolve().parent
@@ -118,6 +120,9 @@ def is_admin(user_id: int) -> bool:
 def is_banned(user_id: int | str) -> bool:
     return str(user_id) in banned_users
 
+def is_vip(user_id: int | str) -> bool:
+    return str(user_id) in vip_users
+
 def current_date() -> str:
     return datetime.now(TIMEZONE).date().isoformat()
 
@@ -149,7 +154,59 @@ def normalize_cookie_text(raw_bytes: bytes) -> bytes:
 def get_available_cookies_count() -> int:
     return len([f for f in os.listdir(COOKIES_DIR) if f.lower().endswith('.txt')])
 
-# Keyboards
+def check_cookie_active(content_bytes: bytes) -> bool:
+    """Validate cookie before token generation to filter bad accounts."""
+    try:
+        text = content_bytes.decode('utf-8', errors='ignore')
+        cookie_dict = {}
+        
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            m = COOKIE_LINE_RE.match(stripped)
+            if m:
+                cookie_dict[m.group('name')] = m.group('value')
+        
+        if "NetflixId" not in cookie_dict:
+            m = re.search(r'NetflixId=([^;,\s]+)', text)
+            if m: cookie_dict["NetflixId"] = m.group(1)
+        if "SecureNetflixId" not in cookie_dict:
+            m = re.search(r'SecureNetflixId=([^;,\s]+)', text)
+            if m: cookie_dict["SecureNetflixId"] = m.group(1)
+
+        netflix_id = cookie_dict.get("NetflixId")
+        secure_netflix_id = cookie_dict.get("SecureNetflixId", "")
+
+        if not netflix_id:
+            return False
+
+        res = requests.get(
+            "https://www.netflix.com/browse",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Cookie": f"NetflixId={netflix_id}; SecureNetflixId={secure_netflix_id}"
+            },
+            allow_redirects=True,
+            timeout=15
+        )
+
+        url_lower = res.url.lower()
+        text_lower = res.text.lower()
+
+        if any(k in url_lower for k in ["youraccount", "signup", "finishsignup"]) or \
+           any(k in text_lower for k in ["restart your membership", "finish sign up", "finish your sign-up", "step 1 of"]):
+            return False
+            
+        return True
+    except Exception as e:
+        logger.error(f"Cookie validation error: {e}")
+        return False
+
+# ==========================================
+# KEYBOARDS
+# ==========================================
+
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -167,10 +224,32 @@ def public_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton("Link ရယူရန် 🔗", callback_data="claim_link"))
     keyboard.add(types.InlineKeyboardButton("ကျွန်ုပ်၏ Quota 📊", callback_data="my_quota"))
+    
     if is_admin(user_id):
         keyboard.add(types.InlineKeyboardButton("ZIP ဖိုင် တင်ရန် 📤", callback_data="admin_upload"))
         keyboard.add(types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="admin_stats"))
+        keyboard.add(types.InlineKeyboardButton("Admin Panel ⚙️", callback_data="admin_panel"))
+    else:
+        # Get VIP button for normal users pointing to Admin's Telegram
+        keyboard.add(types.InlineKeyboardButton("🌟 Get VIP 🌟", url="https://t.me/Ren2512"))
+    
     return keyboard
+
+def admin_panel_keyboard():
+    """Inline Keyboard for Admin Management Options"""
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("➕ Add VIP", callback_data="panel_add_vip"),
+        types.InlineKeyboardButton("➖ Remove VIP", callback_data="panel_rm_vip"),
+        types.InlineKeyboardButton("🌟 VIP List", callback_data="panel_list_vip"),
+        types.InlineKeyboardButton("🚫 Ban User", callback_data="panel_ban"),
+        types.InlineKeyboardButton("✅ Unban User", callback_data="panel_unban"),
+        types.InlineKeyboardButton("📜 Banned List", callback_data="panel_list_banned"),
+        types.InlineKeyboardButton("👥 All Users", callback_data="panel_list_users"),
+        types.InlineKeyboardButton("🗑 Clear Cookie Pool", callback_data="panel_clear"),
+        types.InlineKeyboardButton("📢 Broadcast", callback_data="panel_broadcast"),
+    )
+    return kb
 
 # ==========================================
 # WEB SERVER
@@ -206,99 +285,6 @@ def send_welcome_and_menu(message):
         disable_web_page_preview=True,
     )
 
-@bot.message_handler(commands=['users'])
-def show_users(message):
-    if message.chat.id != ADMIN_ID:
-        bot.reply_to(message, "ပိုင်ရှင်ရှိတယ်")
-        return
-    if not active_users:
-        bot.reply_to(message, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
-        return
-    user_list_text = f"👥 စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး\n\n"
-    for uid, uname in active_users.items():
-        status = " (🚫 Blocked)" if uid in banned_users else ""
-        user_list_text += f"▪️ {uname} (ID: <code>{uid}</code>){status}\n"
-    bot.reply_to(message, user_list_text, parse_mode="HTML")
-
-# --- Block / Unblock Commands ---
-@bot.message_handler(commands=['ban', 'block'])
-def ban_user(message):
-    if message.chat.id != ADMIN_ID:
-        return
-    parts = message.text.strip().split()
-    if len(parts) < 2:
-        bot.reply_to(message, "အသုံးပြုပုံ: <code>/ban &lt;user_id&gt;</code>\nဥပမာ: <code>/ban 5786095389</code>", parse_mode="HTML")
-        return
-    target_id = parts[1].strip()
-    banned_users.add(target_id)
-    bot.reply_to(message, f"🚫 User ID <code>{target_id}</code> ကို Block လိုက်ပါပြီ။", parse_mode="HTML")
-
-@bot.message_handler(commands=['unban', 'unblock'])
-def unban_user(message):
-    if message.chat.id != ADMIN_ID:
-        return
-    parts = message.text.strip().split()
-    if len(parts) < 2:
-        bot.reply_to(message, "အသုံးပြုပုံ: <code>/unban &lt;user_id&gt;</code>", parse_mode="HTML")
-        return
-    target_id = parts[1].strip()
-    banned_users.discard(target_id)
-    bot.reply_to(message, f"✅ User ID <code>{target_id}</code> ကို Unblock လုပ်ပေးလိုက်ပါပြီ။", parse_mode="HTML")
-
-@bot.message_handler(commands=['banned', 'blocklist'])
-def list_banned_users(message):
-    if message.chat.id != ADMIN_ID:
-        return
-    if not banned_users:
-        bot.reply_to(message, "Block ထားသော User မရှိသေးပါ။")
-        return
-    text = f"🚫 Block ထားသော User များ ({len(banned_users)} ဦး):\n\n"
-    for uid in banned_users:
-        text += f"▪️ <code>{uid}</code>\n"
-    bot.reply_to(message, text, parse_mode="HTML")
-# --------------------------------
-
-# --- Clear Cookie Pool Command (Admin Only) ---
-@bot.message_handler(commands=['clearpool', 'clearcookies'])
-def clear_cookie_pool(message):
-    if message.chat.id != ADMIN_ID:
-        return
-    
-    count = 0
-    for f in os.listdir(COOKIES_DIR):
-        if f.lower().endswith('.txt'):
-            try:
-                os.remove(os.path.join(COOKIES_DIR, f))
-                count += 1
-            except Exception as e:
-                logger.error(f"Error deleting file {f}: {e}")
-                
-    bot.reply_to(message, f"🗑 <b>Cookie အဟောင်းများ ရှင်းလင်းခြင်း ပြီးစီးပါပြီ။</b>\n\nဖျက်လိုက်သော ဖိုင်အရေအတွက်: <b>{count}</b> ခု", parse_mode="HTML")
-# ----------------------------------------------
-@bot.message_handler(commands=['broadcast'])
-def start_broadcast(message):
-    if message.chat.id != ADMIN_ID:
-        bot.reply_to(message, "ပိုင်ရှင်ရှိတယ်")
-        return
-    awaiting_broadcast[str(message.chat.id)] = True
-    bot.reply_to(
-        message,
-        "📢 Broadcast ပို့ချင်တဲ့ စာသားကို ရိုက်ပို့ပါ။\nမလုပ်တော့ဘူးဆိုရင် အောက်က ခလုတ်ကို နှိပ်ပါ။",
-        reply_markup=get_broadcast_menu()
-    )
-
-@bot.message_handler(commands=["cancel"])
-def cancel_upload(message: types.Message) -> None:
-    if message.from_user is None or not is_admin(message.from_user.id):
-        return
-    with _pending_lock:
-        _pending_upload_admins.discard(message.from_user.id)
-    bot.send_message(message.chat.id, "ဖိုင်တင်ခြင်းကို ရပ်ဆိုင်းလိုက်ပါပြီ။")
-
-# ==========================================
-# TEXT & BUTTON HANDLERS
-# ==========================================
-
 @bot.message_handler(func=lambda message: message.text == BROADCAST_CANCEL_BTN)
 def cancel_broadcast(message):
     if message.chat.id != ADMIN_ID:
@@ -322,11 +308,38 @@ def stop_process(message):
         bot.reply_to(message, "ဘာပို့ထားလို့ ရပ်ခိုင်းနေတာလဲဟ", reply_markup=get_main_menu())
 
 # ==========================================
+# ADMIN NEXT STEP HANDLERS
+# ==========================================
+
+def process_add_vip(message):
+    if message.text in ["/start 🔄", STOP_BTN, BROADCAST_CANCEL_BTN]: return
+    uid = message.text.strip()
+    vip_users.add(uid)
+    bot.send_message(message.chat.id, f"🌟 User ID <code>{uid}</code> ကို VIP အဖြစ် သတ်မှတ်လိုက်ပါပြီ။", parse_mode="HTML")
+
+def process_rm_vip(message):
+    if message.text in ["/start 🔄", STOP_BTN, BROADCAST_CANCEL_BTN]: return
+    uid = message.text.strip()
+    vip_users.discard(uid)
+    bot.send_message(message.chat.id, f"❌ User ID <code>{uid}</code> ကို VIP မှ ပယ်ဖျက်လိုက်ပါပြီ။", parse_mode="HTML")
+
+def process_ban(message):
+    if message.text in ["/start 🔄", STOP_BTN, BROADCAST_CANCEL_BTN]: return
+    uid = message.text.strip()
+    banned_users.add(uid)
+    bot.send_message(message.chat.id, f"🚫 User ID <code>{uid}</code> ကို Block လိုက်ပါပြီ။", parse_mode="HTML")
+
+def process_unban(message):
+    if message.text in ["/start 🔄", STOP_BTN, BROADCAST_CANCEL_BTN]: return
+    uid = message.text.strip()
+    banned_users.discard(uid)
+    bot.send_message(message.chat.id, f"✅ User ID <code>{uid}</code> ကို Unblock လုပ်ပေးလိုက်ပါပြီ။", parse_mode="HTML")
+
+# ==========================================
 # CALLBACK QUERIES & AUTO TOKEN GENERATOR
 # ==========================================
 
 def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
-    """Executes nf-token-generator.py and returns clean URL or None."""
     input_path = "input.txt"
     try:
         fixed_content = normalize_cookie_text(content_bytes)
@@ -359,7 +372,7 @@ def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
             os.remove(input_path)
 
 
-@bot.callback_query_handler(func=lambda call: call.data in {"claim_link", "my_quota", "admin_upload", "admin_stats"})
+@bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call: types.CallbackQuery) -> None:
     if call.from_user is None or call.message is None:
         return
@@ -372,17 +385,18 @@ def handle_callback(call: types.CallbackQuery) -> None:
         bot.send_message(chat_id, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
 
+    # User Actions
     if call.data == "my_quota":
-        if is_admin(user_id):
-            bot.send_message(chat_id, "👑 သင်ဟာ Admin ဖြစ်တဲ့အတွက် Quota အကန့်အသတ်မရှိ (Unlimited) သုံးနိုင်ပါတယ်။")
+        if is_admin(user_id) or is_vip(user_id):
+            bot.send_message(chat_id, "👑 သင်ဟာ Admin/VIP ဖြစ်တဲ့အတွက် Quota အကန့်အသတ်မရှိ (Unlimited) သုံးနိုင်ပါတယ်။")
         else:
             used, remaining = store.usage(user_id, current_date(), DAILY_LIMIT)
             bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
         return
 
-    if call.data == "claim_link":
-        user_limit = 999999 if is_admin(user_id) else DAILY_LIMIT
-        # Check user quota first
+    elif call.data == "claim_link":
+        user_limit = 999999 if (is_admin(user_id) or is_vip(user_id)) else DAILY_LIMIT
+
         used, remaining = store.usage(user_id, current_date(), user_limit)
         if used >= user_limit:
             bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{DAILY_LIMIT}</b> ခု ပြည့်သွားပြီကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ")
@@ -398,7 +412,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
             try:
                 clean_url = None
                 
-                # Auto-Loop: Active Cookie တွေ့တဲ့အထိ ပျက်နေတဲ့/Restart ဖြစ်နေတဲ့ Cookie တွေကို ကျော်စစ်ဆေးခြင်း
                 while True:
                     cookie_files = [f for f in os.listdir(COOKIES_DIR) if f.lower().endswith('.txt')]
                     if not cookie_files:
@@ -413,24 +426,26 @@ def handle_callback(call: types.CallbackQuery) -> None:
                             os.remove(target_file)
                         continue
 
-                    # Try token generation (nf-token-generator.py)
+                    if not check_cookie_active(content_bytes):
+                        if os.path.exists(target_file):
+                            os.remove(target_file)
+                        continue
+
                     url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
                     
-                    # Delete the evaluated cookie file so it won't be reused
                     if os.path.exists(target_file):
                         os.remove(target_file)
 
                     if url_result:
                         clean_url = url_result
                         break
-                    # If failed / Restart membership, loop will automatically pick the next file
 
                 if clean_url:
                     store.add_links([clean_url], "pool_claimed")
                     result = store.claim_link(user_id, current_date(), user_limit)
                     
                     safe_url = html.escape(clean_url, quote=True)
-                    quota_info = "👑 <b>Admin Account (Unlimited)</b>" if is_admin(user_id) else f"ယနေ့ <b>{result.used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{result.remaining}</b> ခု ကျန်သေးတယ်ကွာ"
+                    quota_info = "👑 <b>VIP/Admin Account (Unlimited)</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{result.used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{result.remaining}</b> ခု ကျန်သေးတယ်ကွာ"
 
                     bot.edit_message_text(
                         chat_id=chat_id,
@@ -439,15 +454,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
                             f"ရပြီဝေ့:\n\n{safe_url}\n\n"
                             f"⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n"
                             f"{quota_info}"
-                        ),
-                        disable_web_page_preview=True)
-                    bot.edit_message_text(
-                        chat_id=chat_id,
-                        message_id=wait_msg.message_id,
-                        text=(
-                            f"ရပြီဝေ့:\n\n{safe_url}\n\n"
-                            f"⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n"
-                            f"ယနေ့ <b>{result.used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{result.remaining}</b> ခု ကျန်သေးတယ်ကွာ"
                         ),
                         disable_web_page_preview=True
                     )
@@ -465,8 +471,8 @@ def handle_callback(call: types.CallbackQuery) -> None:
         Thread(target=process_claim_task).start()
         return
 
+    # Admin Panel Actions
     if not is_admin(user_id):
-        bot.send_message(chat_id, "ဒီလုပ်ဆောင်ချက်က Admin အတွက်သာ ဖြစ်ပါတယ်။")
         return
 
     if call.data == "admin_upload":
@@ -475,23 +481,84 @@ def handle_callback(call: types.CallbackQuery) -> None:
         bot.send_message(
             chat_id,
             "📦 <b>.zip ဖိုင်တစ်ခုကို ပို့ပေးပါ။</b>\n(Zip ထဲတွင် Netflix Cookie <code>.txt</code> ဖိုင်များ ပါဝင်ရပါမည်)\nမတင်လိုပါက /cancel ကို နှိပ်ပါ။",
+            parse_mode="HTML"
         )
-        return
-
-    if call.data == "admin_stats":
+        
+    elif call.data == "admin_stats":
         available_pool = get_available_cookies_count()
         bot.send_message(
             chat_id,
             "📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\n"
             f"Pool ထဲတွင်ရှိသော Cookie ဖိုင်အရေအတွက်: <b>{available_pool}</b> ခု",
+            parse_mode="HTML"
         )
+
+    elif call.data == "admin_panel":
+        bot.send_message(chat_id, "⚙️ <b>Admin Management Panel</b>\nအောက်ပါ လုပ်ဆောင်ချက်များကို ရွေးချယ်ပါ:", reply_markup=admin_panel_keyboard(), parse_mode="HTML")
+
+    elif call.data == "panel_add_vip":
+        msg = bot.send_message(chat_id, "🌟 VIP သတ်မှတ်ပေးမည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
+        bot.register_next_step_handler(msg, process_add_vip)
+
+    elif call.data == "panel_rm_vip":
+        msg = bot.send_message(chat_id, "❌ VIP စာရင်းမှ ဖယ်ရှားမည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
+        bot.register_next_step_handler(msg, process_rm_vip)
+
+    elif call.data == "panel_list_vip":
+        if not vip_users:
+            bot.send_message(chat_id, "🌟 VIP User မရှိသေးပါ။")
+        else:
+            text = f"🌟 <b>VIP User များ ({len(vip_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in vip_users])
+            bot.send_message(chat_id, text, parse_mode="HTML")
+
+    elif call.data == "panel_ban":
+        msg = bot.send_message(chat_id, "🚫 Block ပြုလုပ်မည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
+        bot.register_next_step_handler(msg, process_ban)
+
+    elif call.data == "panel_unban":
+        msg = bot.send_message(chat_id, "✅ Unblock ပြုလုပ်မည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
+        bot.register_next_step_handler(msg, process_unban)
+
+    elif call.data == "panel_list_banned":
+        if not banned_users:
+            bot.send_message(chat_id, "🚫 Block ထားသော User မရှိသေးပါ။")
+        else:
+            text = f"🚫 <b>Block ထားသော User များ ({len(banned_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in banned_users])
+            bot.send_message(chat_id, text, parse_mode="HTML")
+
+    elif call.data == "panel_list_users":
+        if not active_users:
+            bot.send_message(chat_id, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
+        else:
+            text = f"👥 <b>စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး</b>\n\n"
+            for uid, uname in active_users.items():
+                status = ""
+                if uid in banned_users: status = " (🚫 Blocked)"
+                elif uid in vip_users: status = " (🌟 VIP)"
+                text += f"▪️ {uname} (ID: <code>{uid}</code>){status}\n"
+            bot.send_message(chat_id, text, parse_mode="HTML")
+
+    elif call.data == "panel_clear":
+        count = 0
+        for f in os.listdir(COOKIES_DIR):
+            if f.lower().endswith('.txt'):
+                try:
+                    os.remove(os.path.join(COOKIES_DIR, f))
+                    count += 1
+                except Exception as e:
+                    logger.error(f"Error deleting file {f}: {e}")
+        bot.send_message(chat_id, f"🗑 <b>Cookie အဟောင်းများ ရှင်းလင်းခြင်း ပြီးစီးပါပြီ။</b>\n\nဖျက်လိုက်သော ဖိုင်အရေအတွက်: <b>{count}</b> ခု", parse_mode="HTML")
+
+    elif call.data == "panel_broadcast":
+        awaiting_broadcast[str(chat_id)] = True
+        bot.send_message(chat_id, "📢 Broadcast ပို့ချင်တဲ့ စာသားကို ရိုက်ပို့ပါ။\nမလုပ်တော့ဘူးဆိုရင် အောက်က ခလုတ်ကို နှိပ်ပါ။", reply_markup=get_broadcast_menu())
+
 
 # ==========================================
 # FILE & MESSAGE HANDLERS
 # ==========================================
 
 def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
-    """Fallback manual token generation for normal user direct TXT upload"""
     acquired = file_lock.acquire(timeout=90)
     if not acquired:
         bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu())
@@ -499,7 +566,16 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
 
     try:
         if progress_msg_id:
-            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Token ပြန်ပေးမယ် စောင့်နေ.")
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Cookie ကို စစ်ဆေးနေပါတယ်...")
+
+        if not check_cookie_active(content_bytes):
+            bot.send_message(chat_id, "❌ ပို့လိုက်တဲ့ Cookie က သက်တမ်းကုန် (သို့) Sign up ပြန်တောင်းနေပါတယ်။ တခြားတစ်ခု စမ်းကြည့်ပါ။", reply_markup=get_main_menu())
+            if progress_msg_id:
+                bot.delete_message(chat_id=chat_id, message_id=progress_msg_id)
+            return
+
+        if progress_msg_id:
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ။")
 
         clean_url = execute_token_generation(content_bytes, user_id, chat_id)
         if clean_url:
@@ -517,7 +593,6 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
     finally:
         file_lock.release()
 
-
 @bot.message_handler(content_types=["document"])
 def process_document_merged(message: types.Message):
     if message.from_user is None or message.document is None:
@@ -531,7 +606,6 @@ def process_document_merged(message: types.Message):
 
     log_user(message)
 
-    # Check if admin is uploading ZIP
     with _pending_lock:
         upload_expected = user_id in _pending_upload_admins
 
@@ -552,9 +626,8 @@ def process_document_merged(message: types.Message):
             file_info = bot.get_file(document.file_id)
             raw_data = bot.download_file(file_info.file_path)
             
-            # Unzip TXT files into COOKIES_DIR
             extracted_count = 0
-            with zipfile.ZipFile(io.BytesIO(raw_data)) as z:
+            with zip_lib.ZipFile(io.BytesIO(raw_data)) as z:
                 for file_info_z in z.infolist():
                     if file_info_z.filename.lower().endswith('.txt') and not file_info_z.is_dir():
                         extracted_filename = f"cookie_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{os.path.basename(file_info_z.filename)}"
@@ -574,10 +647,10 @@ def process_document_merged(message: types.Message):
                     f"✅ <b>ZIP ဖိုင် ဖြေပြီးပါပြီ။</b>\n\n"
                     f"▪️ ယခုထည့်သွင်းလိုက်သော Cookie အရေအတွက်: <b>{extracted_count}</b> ခု\n"
                     f"▪️ စုစုပေါင်း အသင့်ရှိသော Cookie အရေအတွက်: <b>{total_pool}</b> ခု"
-                )
+                ), parse_mode="HTML"
             )
             return
-        except zipfile.BadZipFile:
+        except zip_lib.BadZipFile:
             bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text="❌ ZIP ဖိုင် ပျက်နေပါသည်။ ကျေးဇူးပြု၍ ပြန်စစ်ဆေးပေးပါ။")
             return
         except Exception as e:
@@ -585,7 +658,6 @@ def process_document_merged(message: types.Message):
             bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error ဖြစ်သွားပါသည်: {e}")
             return
 
-    # If NOT an admin upload state, process as normal individual Netflix Cookie file
     stop_flags[str_user_id] = False
     file_name = message.document.file_name.lower()
 
@@ -618,14 +690,12 @@ def handle_text_merged(message: types.Message):
 
     log_user(message)
 
-    # Check for Admin pending upload state warning
     with _pending_lock:
         upload_expected = chat_id in _pending_upload_admins
     if upload_expected and is_admin(chat_id):
         bot.reply_to(message, "ကျေးဇူးပြု၍ .zip ဖိုင်ကို ပို့ပေးပါ သို့မဟုတ် /cancel ကိုနှိပ်ပါ။")
         return
 
-    # Check for Admin Broadcast
     if chat_id == ADMIN_ID and awaiting_broadcast.get(user_id):
         awaiting_broadcast[user_id] = False
         broadcast_text = message.text
@@ -645,7 +715,6 @@ def handle_text_merged(message: types.Message):
         )
         return
 
-    # Normal user sending pasted cookie text
     stop_flags[user_id] = False
     progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
 
@@ -660,5 +729,5 @@ def handle_text_merged(message: types.Message):
 
 if __name__ == "__main__":
     Thread(target=run_web, daemon=True).start()
-    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ်, ZIP Pool & Block စနစ် ဖြင့်)...")
+    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ်, ZIP Pool, VIP & Block စနစ် ဖြင့်)...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
