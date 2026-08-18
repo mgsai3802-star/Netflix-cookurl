@@ -1,3 +1,5 @@
+"""Combined Telegram bot for Bulk ZIP Cookie Token Generation and Storage Management."""
+
 from __future__ import annotations
 
 import telebot
@@ -6,6 +8,8 @@ import subprocess
 import sys
 import os
 import re
+import io
+import zipfile
 import threading
 import html
 import logging
@@ -48,11 +52,13 @@ active_users = {
     "5389816539": "Hiza2026",
 }
 
-# Storage Link Bot Configs
+# Storage & Folders Configs
 BASE_DIR = Path(__file__).resolve().parent
 DATABASE_PATH = Path(os.getenv("DATABASE_PATH", str(BASE_DIR / "link_bot.sqlite3")))
 DAILY_LIMIT = int(os.getenv("DAILY_LIMIT", "3"))
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(2 * 1024 * 1024)))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))) # 20MB for ZIP
+COOKIES_DIR = BASE_DIR / "cookie_pool"
+os.makedirs(COOKIES_DIR, exist_ok=True)
 
 def configured_timezone() -> ZoneInfo:
     timezone_name = os.getenv("APP_TIMEZONE", "Asia/Yangon")
@@ -81,7 +87,7 @@ running_process = {}
 stop_flags = {}
 awaiting_broadcast = {}
 
-# Link Upload Tracking
+# Admin Upload Tracking
 _pending_upload_admins: set[int] = set()
 _pending_lock = threading.Lock()
 
@@ -134,6 +140,9 @@ def normalize_cookie_text(raw_bytes: bytes) -> bytes:
             fixed_lines.append(line)
     return ('\n'.join(fixed_lines) + '\n').encode('utf-8')
 
+def get_available_cookies_count() -> int:
+    return len([f for f in os.listdir(COOKIES_DIR) if f.lower().endswith('.txt')])
+
 # Keyboards
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -153,7 +162,7 @@ def public_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
     keyboard.add(types.InlineKeyboardButton("Link ရယူရန် 🔗", callback_data="claim_link"))
     keyboard.add(types.InlineKeyboardButton("ကျွန်ုပ်၏ Quota 📊", callback_data="my_quota"))
     if is_admin(user_id):
-        keyboard.add(types.InlineKeyboardButton("TXT Link များ တင်ရန် 📤", callback_data="admin_upload"))
+        keyboard.add(types.InlineKeyboardButton("ZIP ဖိုင် တင်ရန် 📤", callback_data="admin_upload"))
         keyboard.add(types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="admin_stats"))
     return keyboard
 
@@ -248,8 +257,42 @@ def stop_process(message):
         bot.reply_to(message, "ဘာပို့ထားလို့ ရပ်ခိုင်းနေတာလဲဟ", reply_markup=get_main_menu())
 
 # ==========================================
-# CALLBACK QUERIES (Link Storage)
+# CALLBACK QUERIES & AUTO TOKEN GENERATOR
 # ==========================================
+
+def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
+    """Executes nf-token-generator.py and returns clean URL or None."""
+    input_path = "input.txt"
+    try:
+        fixed_content = normalize_cookie_text(content_bytes)
+        with open(input_path, "wb") as f:
+            f.write(fixed_content)
+
+        proc = subprocess.Popen(
+            [sys.executable, 'nf-token-generator.py'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        running_process[user_id] = proc
+        try:
+            stdout, stderr = proc.communicate(timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            return None
+        finally:
+            running_process.pop(user_id, None)
+
+        match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', stdout or "")
+        if match:
+            return match.group(1)
+        return None
+    except Exception as e:
+        logger.error(f"Execution error: {e}")
+        return None
+    finally:
+        if os.path.exists(input_path):
+            os.remove(input_path)
+
 
 @bot.callback_query_handler(func=lambda call: call.data in {"claim_link", "my_quota", "admin_upload", "admin_stats"})
 def handle_callback(call: types.CallbackQuery) -> None:
@@ -266,24 +309,63 @@ def handle_callback(call: types.CallbackQuery) -> None:
         return
 
     if call.data == "claim_link":
-        result = store.claim_link(user_id, current_date(), DAILY_LIMIT)
-        if result.status == "claimed" and result.url:
-            safe_url = html.escape(result.url, quote=True)
-            bot.send_message(
-                chat_id,
-                "သင်၏ Link:\n"
-                f"<code>{safe_url}</code>\n\n"
-                f"ယနေ့ <b>{result.used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{result.remaining}</b> ခု ကျန်သေးတယ်ကွာ",
-                disable_web_page_preview=True,
-            )
-            return
-        if result.status == "quota_reached":
+        # Check user quota first
+        used, remaining = store.usage(user_id, current_date(), DAILY_LIMIT)
+        if used >= DAILY_LIMIT:
             bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{DAILY_LIMIT}</b> ခု ပြည့်သွားပြီကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ")
             return
-        if result.status == "inventory_empty":
-            bot.send_message(chat_id, "လောလောဆယ် Link များ ကုန်နေပါတယ်ကွာ။ နောက်မှ ထပ်စမ်းကြည့်ကွာဆောတီးကွာ")
-            return
-        bot.send_message(chat_id, "“Link ရယူရန် 🔗” ကို ထပ်နှိပ်ပေးကွာ")
+
+        def process_claim_task():
+            acquired = file_lock.acquire(timeout=90)
+            if not acquired:
+                bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး")
+                return
+
+            wait_msg = bot.send_message(chat_id, "⏳ Cookie ကို Token ပြောင်းနေပြီ ခဏစောင့်ကွာ...")
+            try:
+                # Find available cookie files in cookie_pool
+                cookie_files = [f for f in os.listdir(COOKIES_DIR) if f.lower().endswith('.txt')]
+                if not cookie_files:
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, 
+                                          text="လောလောဆယ် Cookie များ ကုန်နေတယ်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ")
+                    return
+
+                target_file = os.path.join(COOKIES_DIR, cookie_files[0])
+                with open(target_file, "rb") as f:
+                    content_bytes = f.read()
+
+                # Generate Token Link
+                clean_url = execute_token_generation(content_bytes, str(user_id), chat_id)
+                
+                # Delete the used cookie file so no one else gets it
+                if os.path.exists(target_file):
+                    os.remove(target_file)
+
+                if clean_url:
+                    # Record quota in database
+                    store.add_links([clean_url], "pool_claimed")
+                    result = store.claim_link(user_id, current_date(), DAILY_LIMIT)
+                    
+                    safe_url = html.escape(clean_url, quote=True)
+                    bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=wait_msg.message_id,
+                        text=(
+                            f"ရပြီဝေ့:\n\n<code>{safe_url}</code>\n\n"
+                            f"⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n"
+                            f"ယနေ့ <b>{result.used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{result.remaining}</b> ခု ကျန်သေးတယ်ကွာ"
+                        ),
+                        disable_web_page_preview=True
+                    )
+                else:
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, 
+                                          text="Cookie ပျက်နေတာထင်တယ် Token မထွက်ဘူး နောက်တစ်ကြိမ် ထပ်နှိပ်ပေးကွာ")
+            except Exception as e:
+                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error တက်ကုန်ပြီဟ: {e}")
+            finally:
+                file_lock.release()
+
+        Thread(target=process_claim_task).start()
         return
 
     if not is_admin(user_id):
@@ -295,93 +377,49 @@ def handle_callback(call: types.CallbackQuery) -> None:
             _pending_upload_admins.add(user_id)
         bot.send_message(
             chat_id,
-            "ယခု <code>.txt</code> ဖိုင်တစ်ခုကို ပို့ပေးပါ။ စာကြောင်းတစ်ကြောင်းမှာ Link (URL) တစ်ခုစီ ထည့်ပေးပါ။\nထပ်နေသော၊ မှားယွင်းနေသော Link များကို အလိုအလျောက် ပယ်ဖျက်ပေးပါမည်။\nရပ်ချင်ပါက /cancel ကို နှိပ်ပါ။",
+            "📦 <b>.zip ဖိုင်တစ်ခုကို ပို့ပေးပါ။</b>\n(Zip ထဲတွင် Netflix Cookie <code>.txt</code> ဖိုင်များ ပါဝင်ရပါမည်)\nမတင်လိုပါက /cancel ကို နှိပ်ပါ။",
         )
         return
 
     if call.data == "admin_stats":
-        stats = store.stats()
+        available_pool = get_available_cookies_count()
         bot.send_message(
             chat_id,
-            "လက်ကျန်စာရင်း အခြေအနေ\n\n"
-            f"ရနိုင်သေးသောအရေအတွက်: <b>{stats['available']}</b>\n"
-            f"ယူပြီးသောအရေအတွက်: <b>{stats['assigned']}</b>\n"
-            f"စုစုပေါင်း: <b>{stats['total']}</b>",
+            "📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\n"
+            f"Pool ထဲတွင်ရှိသော Cookie ဖိုင်အရေအတွက်: <b>{available_pool}</b> ခု",
         )
 
 # ==========================================
-# CORE PROCESSING TASKS
+# FILE & MESSAGE HANDLERS
 # ==========================================
 
 def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
+    """Fallback manual token generation for normal user direct TXT upload"""
     acquired = file_lock.acquire(timeout=90)
     if not acquired:
         bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu())
         return
 
-    input_path = "input.txt"
-
     try:
-        if stop_flags.get(user_id):
-            if progress_msg_id:
-                bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="⏹ မလုပ်ပေးတော့ဘူးကွာ")
-            return
-
         if progress_msg_id:
             bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Token ပြန်ပေးမယ် စောင့်နေ.")
 
-        fixed_content = normalize_cookie_text(content_bytes)
-        with open(input_path, "wb") as f:
-            f.write(fixed_content)
-
-        if stop_flags.get(user_id):
-            bot.send_message(chat_id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
-            return
-
-        proc = subprocess.Popen(
-            [sys.executable, 'nf-token-generator.py'],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-        )
-        running_process[user_id] = proc
-
-        try:
-            stdout, stderr = proc.communicate(timeout=120)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, stderr = proc.communicate()
-            bot.send_message(chat_id, "⏱️ ကြာလွန်းလို့ ရပ်လိုက်ပြီ ထပ်ကြိုးစားပေးကွာ", reply_markup=get_main_menu())
-            return
-        finally:
-            running_process.pop(user_id, None)
-
-        if stop_flags.get(user_id):
-            bot.send_message(chat_id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
-            return
-
-        match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', stdout or "")
-        if match:
-            clean_url = match.group(1)
+        clean_url = execute_token_generation(content_bytes, user_id, chat_id)
+        if clean_url:
             reply = (
                 f"ရပြီဝေ့:\n\n{clean_url}\n\n"
-                "⚠️ **သတိထား** - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်"
+                "⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်"
             )
-            bot.send_message(chat_id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
+            bot.send_message(chat_id, reply, reply_markup=get_main_menu())
         else:
-            err_snippet = (stderr or "Cookie ပျက်နေတာထင်တယ် နောက်တစ်ခုစမ်းကွာ")[:500]
             bot.send_message(chat_id, "Token မတွေ့ဘူး နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
-            bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id}):\n```\n{err_snippet}\n```", parse_mode="Markdown")
+            bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id})")
 
     except Exception as e:
         bot.send_message(chat_id, f"Error တက်ကုန်ပြီဟ: {e}", reply_markup=get_main_menu())
     finally:
-        running_process.pop(user_id, None)
-        if os.path.exists(input_path):
-            os.remove(input_path)
         file_lock.release()
 
-# ==========================================
-# FILE & MESSAGE HANDLERS
-# ==========================================
 
 @bot.message_handler(content_types=["document"])
 def process_document_merged(message: types.Message):
@@ -391,57 +429,62 @@ def process_document_merged(message: types.Message):
     user_id = message.chat.id
     str_user_id = str(user_id)
 
-    # Check if admin is uploading Authorized Links
+    # Check if admin is uploading ZIP
     with _pending_lock:
         upload_expected = user_id in _pending_upload_admins
 
     if upload_expected and is_admin(user_id):
         document = message.document
-        filename = document.file_name or "uploaded-links.txt"
-        valid_name = filename.lower().endswith(".txt")
-        valid_mime = document.mime_type in {None, "text/plain"}
+        filename = document.file_name or "cookies.zip"
         
-        if not valid_name or not valid_mime:
-            bot.reply_to(message, ".txt ဖိုင်အမျိုးအစားသာ လက်ခံပါသည်။ ဖိုင်တင်ရန် စောင့်ဆိုင်းနေဆဲဖြစ်ပါသည်။")
+        if not filename.lower().endswith(".zip"):
+            bot.reply_to(message, "❌ .zip ဖိုင်အမျိုးအစားသာ လက်ခံပါသည်။ ဖိုင်တင်ရန် စောင့်ဆိုင်းနေဆဲဖြစ်ပါသည်။")
             return
         if document.file_size and document.file_size > MAX_UPLOAD_BYTES:
-            bot.reply_to(message, f"ဖိုင်ဆိုဒ် ကြီးလွန်းနေပါသည်။ အများဆုံး {MAX_UPLOAD_BYTES // 1024} KB သာ လက်ခံပါသည်။")
+            bot.reply_to(message, f"❌ ဖိုင်ဆိုဒ် ကြီးလွန်းနေပါသည်။ အများဆုံး {MAX_UPLOAD_BYTES // (1024*1024)} MB သာ လက်ခံပါသည်။")
             return
+
+        progress = bot.reply_to(message, "📦 ZIP ဖိုင်ကို ဒေါင်းလုဒ်ဆွဲပြီး ဖြည်နေပါသည်...")
 
         try:
             file_info = bot.get_file(document.file_id)
             raw_data = bot.download_file(file_info.file_path)
-            text = raw_data.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            bot.reply_to(message, "ဖိုင်သည် UTF-8 text ဖြစ်ရပါမည်။ ဖိုင်တင်ရန် စောင့်ဆိုင်းနေဆဲဖြစ်ပါသည်။")
+            
+            # Unzip TXT files into COOKIES_DIR
+            extracted_count = 0
+            with zipfile.ZipFile(io.BytesIO(raw_data)) as z:
+                for file_info_z in z.infolist():
+                    if file_info_z.filename.lower().endswith('.txt') and not file_info_z.is_dir():
+                        # Extract with a timestamped unique name
+                        extracted_filename = f"cookie_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{os.path.basename(file_info_z.filename)}"
+                        extracted_path = os.path.join(COOKIES_DIR, extracted_filename)
+                        with open(extracted_path, 'wb') as f_out:
+                            f_out.write(z.read(file_info_z.filename))
+                        extracted_count += 1
+
+            with _pending_lock:
+                _pending_upload_admins.discard(user_id)
+
+            total_pool = get_available_cookies_count()
+            bot.edit_message_text(
+                chat_id=user_id,
+                message_id=progress.message_id,
+                text=(
+                    f"✅ <b>ZIP ဖိုင် ဖြေပြီးပါပြီ။</b>\n\n"
+                    f"▪️ ယခုထည့်သွင်းလိုက်သော Cookie အရေအတွက်: <b>{extracted_count}</b> ခု\n"
+                    f"▪️ စုစုပေါင်း အသင့်ရှိသော Cookie အရေအတွက်: <b>{total_pool}</b> ခု"
+                )
+            )
             return
-        except Exception:
-            logger.exception("Could not download an admin TXT file")
-            bot.reply_to(message, "ဖိုင်ကို ဖတ်၍မရပါ။ ကျေးဇူးပြု၍ ထပ်မံကြိုးစားပါ။")
+        except zipfile.BadZipFile:
+            bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text="❌ ZIP ဖိုင် ပျက်နေပါသည်။ ကျေးဇူးပြု၍ ပြန်စစ်ဆေးပေးပါ။")
+            return
+        except Exception as e:
+            logger.exception("ZIP extract failed")
+            bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error ဖြစ်သွားပါသည်: {e}")
             return
 
-        try:
-            result = store.add_links(text.splitlines(), filename)
-        except Exception:
-            logger.exception("Could not import TXT links")
-            bot.reply_to(message, "Import လုပ်ခြင်း မအောင်မြင်ပါ။ ပြန်လည်ကြိုးစားကြည့်ပါ။")
-            return
-
-        with _pending_lock:
-            _pending_upload_admins.discard(user_id)
-
-        stats = store.stats()
-        bot.reply_to(
-            message,
-            "Import လုပ်ခြင်း ပြီးစီးပါပြီ。\n\n"
-            f"အသစ်ထည့်သွင်းမှု: <b>{result.added}</b>\n"
-            f"ထပ်နေ၍ပယ်ဖျက်မှု: <b>{result.duplicates}</b>\n"
-            f"အမှားကြောင့်ပယ်ဖျက်မှု: <b>{result.invalid}</b>\n"
-            f"လက်ရှိရနိုင်သောအရေအတွက်: <b>{stats['available']}</b>",
-        )
-        return
-
-    # If NOT an admin upload state, process as Netflix Cookie file
+    # If NOT an admin upload state, process as normal individual Netflix Cookie file
     stop_flags[str_user_id] = False
     file_name = message.document.file_name.lower()
 
@@ -473,7 +516,7 @@ def handle_text_merged(message: types.Message):
     with _pending_lock:
         upload_expected = chat_id in _pending_upload_admins
     if upload_expected and is_admin(chat_id):
-        bot.reply_to(message, "ကျေးဇူးပြု၍ .txt ဖိုင်ကို ပို့ပေးပါ သို့မဟုတ် /cancel ကိုနှိပ်ပါ။")
+        bot.reply_to(message, "ကျေးဇူးပြု၍ .zip ဖိုင်ကို ပို့ပေးပါ သို့မဟုတ် /cancel ကိုနှိပ်ပါ။")
         return
 
     # Check for Admin Broadcast
@@ -509,6 +552,5 @@ def handle_text_merged(message: types.Message):
 
 if __name__ == "__main__":
     Thread(target=run_web, daemon=True).start()
-    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ် နှင့် Link Database ဖြင့်)...")
+    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ် နှင့် ZIP Pool ဖြင့်)...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
-
