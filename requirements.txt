@@ -4,3 +4,4 @@ Flask
 rarfile
 urllib3
 tzdata
+supabase
