@@ -183,7 +183,7 @@ def send_welcome_and_menu(message):
     )
     bot.send_message(
         message.chat.id,
-        "အောက်ပါ ခလုတ်များကို အသုံးပြုပါ။ (Admin ခွင့်ပြုထားသော Link များသာ ဖြစ်ရမည်)",
+        "အောက်က ခလုတ်များကို သုံးပြီး Admin တင်ပေးထားတဲ့ အသင့်သုံး linkများထုတ်ကွာ)",
         reply_markup=public_keyboard(message.from_user.id),
         disable_web_page_preview=True,
     )
@@ -262,7 +262,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
 
     if call.data == "my_quota":
         used, remaining = store.usage(user_id, current_date(), DAILY_LIMIT)
-        bot.send_message(chat_id, f"ယနေ့ Quota: <b>{used}/{DAILY_LIMIT}</b> ခု သုံးထားပါတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်။")
+        bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{DAILY_LIMIT}</b> ခု သုံးထားပါကွာ — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
         return
 
     if call.data == "claim_link":
