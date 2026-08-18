@@ -414,7 +414,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
                         chat_id=chat_id,
                         message_id=wait_msg.message_id,
                         text=(
-                            f"ရပြီဝေ့:\n\n<code>{safe_url}</code>\n\n"
+                            f"ရပြီဝေ့:\n\n{safe_url}\n\n"
                             f"⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n"
                             f"ယနေ့ <b>{result.used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{result.remaining}</b> ခု ကျန်သေးတယ်ကွာ"
                         ),
