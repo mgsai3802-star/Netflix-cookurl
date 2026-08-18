@@ -1,4 +1,4 @@
-"""Combined Telegram bot for Bulk ZIP Cookie Token Generation and Storage Management."""
+"""Combined Telegram bot for Bulk ZIP Cookie Token Generation, Storage Management, and User Blocking."""
 
 from __future__ import annotations
 
@@ -51,6 +51,9 @@ active_users = {
     "5272159743": "phetkyam",
     "5389816539": "Hiza2026",
 }
+
+# Blocked Users Set
+banned_users: set[str] = set()
 
 # Storage & Folders Configs
 BASE_DIR = Path(__file__).resolve().parent
@@ -111,6 +114,9 @@ COOKIE_LINE_RE = re.compile(
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
+
+def is_banned(user_id: int | str) -> bool:
+    return str(user_id) in banned_users
 
 def current_date() -> str:
     return datetime.now(TIMEZONE).date().isoformat()
@@ -184,6 +190,9 @@ def run_web():
 
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome_and_menu(message):
+    if is_banned(message.chat.id):
+        bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
+        return
     log_user(message)
     bot.reply_to(
         message,
@@ -207,8 +216,47 @@ def show_users(message):
         return
     user_list_text = f"👥 စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး\n\n"
     for uid, uname in active_users.items():
-        user_list_text += f"▪️ {uname} (ID: <code>{uid}</code>)\n"
+        status = " (🚫 Blocked)" if uid in banned_users else ""
+        user_list_text += f"▪️ {uname} (ID: <code>{uid}</code>){status}\n"
     bot.reply_to(message, user_list_text, parse_mode="HTML")
+
+# --- Block / Unblock Commands ---
+@bot.message_handler(commands=['ban', 'block'])
+def ban_user(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        bot.reply_to(message, "အသုံးပြုပုံ: <code>/ban &lt;user_id&gt;</code>\nဥပမာ: <code>/ban 5786095389</code>", parse_mode="HTML")
+        return
+    target_id = parts[1].strip()
+    banned_users.add(target_id)
+    bot.reply_to(message, f"🚫 User ID <code>{target_id}</code> ကို Block လိုက်ပါပြီ။", parse_mode="HTML")
+
+@bot.message_handler(commands=['unban', 'unblock'])
+def unban_user(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        bot.reply_to(message, "အသုံးပြုပုံ: <code>/unban &lt;user_id&gt;</code>", parse_mode="HTML")
+        return
+    target_id = parts[1].strip()
+    banned_users.discard(target_id)
+    bot.reply_to(message, f"✅ User ID <code>{target_id}</code> ကို Unblock လုပ်ပေးလိုက်ပါပြီ။", parse_mode="HTML")
+
+@bot.message_handler(commands=['banned', 'blocklist'])
+def list_banned_users(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    if not banned_users:
+        bot.reply_to(message, "Block ထားသော User မရှိသေးပါ။")
+        return
+    text = f"🚫 Block ထားသော User များ ({len(banned_users)} ဦး):\n\n"
+    for uid in banned_users:
+        text += f"▪️ <code>{uid}</code>\n"
+    bot.reply_to(message, text, parse_mode="HTML")
+# --------------------------------
 
 @bot.message_handler(commands=['broadcast'])
 def start_broadcast(message):
@@ -303,6 +351,10 @@ def handle_callback(call: types.CallbackQuery) -> None:
     chat_id = call.message.chat.id
     bot.answer_callback_query(call.id)
 
+    if is_banned(user_id):
+        bot.send_message(chat_id, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
+        return
+
     if call.data == "my_quota":
         used, remaining = store.usage(user_id, current_date(), DAILY_LIMIT)
         bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
@@ -321,25 +373,36 @@ def handle_callback(call: types.CallbackQuery) -> None:
                 bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး")
                 return
 
-            wait_msg = bot.send_message(chat_id, "⏳ Cookie ကို Token ပြောင်းနေပြီ ခဏစောင့်ကွာ...")
+            wait_msg = bot.send_message(chat_id, "⏳ Cookie ကို စစ်ဆေးပြီး Token ထုတ်နေပါပြီ ခဏစောင့်ကွာ...")
             try:
-                # Find available cookie files in cookie_pool
-                cookie_files = [f for f in os.listdir(COOKIES_DIR) if f.lower().endswith('.txt')]
-                if not cookie_files:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, 
-                                          text="လောလောဆယ် Cookie များ ကုန်နေတယ်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ")
-                    return
-
-                target_file = os.path.join(COOKIES_DIR, cookie_files[0])
-                with open(target_file, "rb") as f:
-                    content_bytes = f.read()
-
-                # Generate Token Link
-                clean_url = execute_token_generation(content_bytes, str(user_id), chat_id)
+                clean_url = None
                 
-                # Delete the used cookie file so no one else gets it
-                if os.path.exists(target_file):
-                    os.remove(target_file)
+                # Auto-Loop: Active Cookie တွေ့တဲ့အထိ ပျက်နေတဲ့/Restart ဖြစ်နေတဲ့ Cookie တွေကို ကျော်စစ်ဆေးခြင်း
+                while True:
+                    cookie_files = [f for f in os.listdir(COOKIES_DIR) if f.lower().endswith('.txt')]
+                    if not cookie_files:
+                        break
+
+                    target_file = os.path.join(COOKIES_DIR, cookie_files[0])
+                    try:
+                        with open(target_file, "rb") as f:
+                            content_bytes = f.read()
+                    except Exception:
+                        if os.path.exists(target_file):
+                            os.remove(target_file)
+                        continue
+
+                    # Try token generation (nf-token-generator.py)
+                    url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
+                    
+                    # Delete the evaluated cookie file so it won't be reused
+                    if os.path.exists(target_file):
+                        os.remove(target_file)
+
+                    if url_result:
+                        clean_url = url_result
+                        break
+                    # If failed / Restart membership, loop will automatically pick the next file
 
                 if clean_url:
                     # Record quota in database
@@ -358,8 +421,11 @@ def handle_callback(call: types.CallbackQuery) -> None:
                         disable_web_page_preview=True
                     )
                 else:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, 
-                                          text="Cookie ပျက်နေတာထင်တယ် Token မထွက်ဘူး နောက်တစ်ကြိမ် ထပ်နှိပ်ပေးကွာ")
+                    bot.edit_message_text(
+                        chat_id=chat_id, 
+                        message_id=wait_msg.message_id, 
+                        text="လောလောဆယ် အဆင်ပြေသော Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။"
+                    )
             except Exception as e:
                 bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error တက်ကုန်ပြီဟ: {e}")
             finally:
@@ -412,7 +478,7 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
             )
             bot.send_message(chat_id, reply, reply_markup=get_main_menu())
         else:
-            bot.send_message(chat_id, "Token မတွေ့ဘူး နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
+            bot.send_message(chat_id, "Token မတွေ့ဘူး (သို့မဟုတ် အကောင့်ပျက်နေသည်) နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
             bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id})")
 
     except Exception as e:
@@ -425,9 +491,14 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
 def process_document_merged(message: types.Message):
     if message.from_user is None or message.document is None:
         return
-    log_user(message)
     user_id = message.chat.id
     str_user_id = str(user_id)
+
+    if is_banned(user_id):
+        bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
+        return
+
+    log_user(message)
 
     # Check if admin is uploading ZIP
     with _pending_lock:
@@ -455,7 +526,6 @@ def process_document_merged(message: types.Message):
             with zipfile.ZipFile(io.BytesIO(raw_data)) as z:
                 for file_info_z in z.infolist():
                     if file_info_z.filename.lower().endswith('.txt') and not file_info_z.is_dir():
-                        # Extract with a timestamped unique name
                         extracted_filename = f"cookie_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{os.path.basename(file_info_z.filename)}"
                         extracted_path = os.path.join(COOKIES_DIR, extracted_filename)
                         with open(extracted_path, 'wb') as f_out:
@@ -508,9 +578,14 @@ def handle_text_merged(message: types.Message):
     if message.text in ["/start 🔄", STOP_BTN, BROADCAST_CANCEL_BTN]:
         return
 
-    log_user(message)
     chat_id = message.chat.id
     user_id = str(chat_id)
+
+    if is_banned(user_id):
+        bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
+        return
+
+    log_user(message)
 
     # Check for Admin pending upload state warning
     with _pending_lock:
@@ -525,6 +600,8 @@ def handle_text_merged(message: types.Message):
         broadcast_text = message.text
         sent, failed = 0, 0
         for uid in active_users.keys():
+            if uid in banned_users:
+                continue
             try:
                 bot.send_message(int(uid), broadcast_text)
                 sent += 1
@@ -552,5 +629,5 @@ def handle_text_merged(message: types.Message):
 
 if __name__ == "__main__":
     Thread(target=run_web, daemon=True).start()
-    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ် နှင့် ZIP Pool ဖြင့်)...")
+    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ်, ZIP Pool & Block စနစ် ဖြင့်)...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
