@@ -186,20 +186,6 @@ def fetch_nftoken(cookie_dict):
     if isinstance(expires, int) and len(str(expires)) == 13:
         expires //= 1000
 
-    # Subscription Inactive ဖြစ်နေခြင်း ("Restart Your Membership") ဟုတ်မဟုတ် စစ်ဆေးခြင်း
-    check_session = requests.get(
-        "https://www.netflix.com/browse",
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Cookie": f"NetflixId={netflix_id}; SecureNetflixId={cookie_dict.get('SecureNetflixId', '')}"
-        },
-        allow_redirects=True,
-        timeout=15
-    )
-
-    if "youraccount" in check_session.url or "signup" in check_session.url or "Restart Your Membership" in check_session.text:
-        raise ValueError("Inactive Account: Membership needs to be restarted.")
-
     return token, expires
 
 
@@ -244,5 +230,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
