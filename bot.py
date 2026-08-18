@@ -258,6 +258,23 @@ def list_banned_users(message):
     bot.reply_to(message, text, parse_mode="HTML")
 # --------------------------------
 
+# --- Clear Cookie Pool Command (Admin Only) ---
+@bot.message_handler(commands=['clearpool', 'clearcookies'])
+def clear_cookie_pool(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    
+    count = 0
+    for f in os.listdir(COOKIES_DIR):
+        if f.lower().endswith('.txt'):
+            try:
+                os.remove(os.path.join(COOKIES_DIR, f))
+                count += 1
+            except Exception as e:
+                logger.error(f"Error deleting file {f}: {e}")
+                
+    bot.reply_to(message, f"🗑 <b>Cookie အဟောင်းများ ရှင်းလင်းခြင်း ပြီးစီးပါပြီ။</b>\n\nဖျက်လိုက်သော ဖိုင်အရေအတွက်: <b>{count}</b> ခု", parse_mode="HTML")
+# ----------------------------------------------
 @bot.message_handler(commands=['broadcast'])
 def start_broadcast(message):
     if message.chat.id != ADMIN_ID:
