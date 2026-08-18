@@ -1,4 +1,7 @@
-"""Combined Telegram bot for Netflix Token Generation and Authorized Link Distribution."""
+import os
+import zipfile
+
+myanmar_bot_code = """\"\"\"Combined Telegram bot for Netflix Token Generation and Authorized Link Distribution (Burmese Version).\"\"\"
 
 from __future__ import annotations
 
@@ -92,12 +95,12 @@ STOP_BTN = "⏹ ဟိုးစတော့"
 BROADCAST_CANCEL_BTN = "❌ Broadcast ပယ်ဖျက်"
 
 COOKIE_LINE_RE = re.compile(
-    r'^(?P<domain>\S+)\s+'
-    r'(?P<flag1>TRUE|FALSE)\s+'
-    r'(?P<path>/\S*?)\s*(?=TRUE|FALSE)'
-    r'(?P<secure>TRUE|FALSE)\s+'
-    r'(?P<expiry>\d+)\s+'
-    r'(?P<name>\S+)\s+'
+    r'^(?P<domain>\\S+)\\s+'
+    r'(?P<flag1>TRUE|FALSE)\\s+'
+    r'(?P<path>/\\S*?)\\s*(?=TRUE|FALSE)'
+    r'(?P<secure>TRUE|FALSE)\\s+'
+    r'(?P<expiry>\\d+)\\s+'
+    r'(?P<name>\\S+)\\s+'
     r'(?P<value>.*)$'
 )
 
@@ -127,14 +130,14 @@ def normalize_cookie_text(raw_bytes: bytes) -> bytes:
             continue
         m = COOKIE_LINE_RE.match(stripped)
         if m:
-            fixed_lines.append('\t'.join([
+            fixed_lines.append('\\t'.join([
                 m.group('domain'), m.group('flag1'), m.group('path'),
                 m.group('secure'), m.group('expiry'),
                 m.group('name'), m.group('value')
             ]))
         else:
             fixed_lines.append(line)
-    return ('\n'.join(fixed_lines) + '\n').encode('utf-8')
+    return ('\\n'.join(fixed_lines) + '\\n').encode('utf-8')
 
 # Keyboards
 def get_main_menu():
@@ -152,11 +155,11 @@ def get_broadcast_menu():
 
 def public_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton("Get ready link", callback_data="claim_link"))
-    keyboard.add(types.InlineKeyboardButton("My quota", callback_data="my_quota"))
+    keyboard.add(types.InlineKeyboardButton("Link ရယူရန် 🔗", callback_data="claim_link"))
+    keyboard.add(types.InlineKeyboardButton("ကျွန်ုပ်၏ Quota 📊", callback_data="my_quota"))
     if is_admin(user_id):
-        keyboard.add(types.InlineKeyboardButton("Upload TXT links", callback_data="admin_upload"))
-        keyboard.add(types.InlineKeyboardButton("Inventory status", callback_data="admin_stats"))
+        keyboard.add(types.InlineKeyboardButton("TXT Link များ တင်ရန် 📤", callback_data="admin_upload"))
+        keyboard.add(types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="admin_stats"))
     return keyboard
 
 # ==========================================
@@ -187,7 +190,7 @@ def send_welcome_and_menu(message):
     # Link Distributer Menu
     bot.send_message(
         message.chat.id,
-        "Use the buttons below. Links must be content the administrator is authorized to distribute.",
+        "အောက်ပါ ခလုတ်များကို အသုံးပြုပါ။ (Admin ခွင့်ပြုထားသော Link များသာ ဖြစ်ရမည်)",
         reply_markup=public_keyboard(message.from_user.id),
         disable_web_page_preview=True,
     )
@@ -200,9 +203,9 @@ def show_users(message):
     if not active_users:
         bot.reply_to(message, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
         return
-    user_list_text = f"👥 စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး\n\n"
+    user_list_text = f"👥 စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး\\n\\n"
     for uid, uname in active_users.items():
-        user_list_text += f"▪️ {uname} (ID: <code>{uid}</code>)\n"
+        user_list_text += f"▪️ {uname} (ID: <code>{uid}</code>)\\n"
     bot.reply_to(message, user_list_text, parse_mode="HTML")
 
 @bot.message_handler(commands=['broadcast'])
@@ -213,17 +216,17 @@ def start_broadcast(message):
     awaiting_broadcast[str(message.chat.id)] = True
     bot.reply_to(
         message,
-        "📢 Broadcast ပို့ချင်တဲ့ စာသားကို ရိုက်ပို့ပါ။\nမလုပ်တော့ဘူးဆိုရင် အောက်က ခလုတ်ကို နှိပ်ပါ။",
+        "📢 Broadcast ပို့ချင်တဲ့ စာသားကို ရိုက်ပို့ပါ။\\nမလုပ်တော့ဘူးဆိုရင် အောက်က ခလုတ်ကို နှိပ်ပါ။",
         reply_markup=get_broadcast_menu()
     )
 
-@bot.message_handler(commands=["cancel"])
+@bot.message_handler(commands=[\"cancel\"])
 def cancel_upload(message: types.Message) -> None:
     if message.from_user is None or not is_admin(message.from_user.id):
         return
     with _pending_lock:
         _pending_upload_admins.discard(message.from_user.id)
-    bot.send_message(message.chat.id, "The pending upload was cancelled.")
+    bot.send_message(message.chat.id, "ဖိုင်တင်ခြင်းကို ရပ်ဆိုင်းလိုက်ပါပြီ။")
 
 # ==========================================
 # TEXT & BUTTON HANDLERS
@@ -255,7 +258,7 @@ def stop_process(message):
 # CALLBACK QUERIES (Link Storage)
 # ==========================================
 
-@bot.callback_query_handler(func=lambda call: call.data in {"claim_link", "my_quota", "admin_upload", "admin_stats"})
+@bot.callback_query_handler(func=lambda call: call.data in {\"claim_link\", \"my_quota\", \"admin_upload\", \"admin_stats\"})
 def handle_callback(call: types.CallbackQuery) -> None:
     if call.from_user is None or call.message is None:
         return
@@ -264,54 +267,53 @@ def handle_callback(call: types.CallbackQuery) -> None:
     chat_id = call.message.chat.id
     bot.answer_callback_query(call.id)
 
-    if call.data == "my_quota":
+    if call.data == \"my_quota\":
         used, remaining = store.usage(user_id, current_date(), DAILY_LIMIT)
-        bot.send_message(chat_id, f"Today’s quota: <b>{used}/{DAILY_LIMIT}</b> used — <b>{remaining}</b> remaining.")
+        bot.send_message(chat_id, f\"ယနေ့ Quota: <b>{used}/{DAILY_LIMIT}</b> ခု သုံးထားပါတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်။\")
         return
 
-    if call.data == "claim_link":
+    if call.data == \"claim_link\":
         result = store.claim_link(user_id, current_date(), DAILY_LIMIT)
-        if result.status == "claimed" and result.url:
+        if result.status == \"claimed\" and result.url:
             safe_url = html.escape(result.url, quote=True)
             bot.send_message(
                 chat_id,
-                "Your authorized link:\n"
-                f"<code>{safe_url}</code>\n\n"
-                f"Today: <b>{result.used}/{DAILY_LIMIT}</b> used — <b>{result.remaining}</b> remaining.",
+                \"သင်၏ Link:\\n\"
+                f\"<code>{safe_url}</code>\\n\\n\"
+                f\"ယနေ့ <b>{result.used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{result.remaining}</b> ခု ကျန်သေးတယ်ကွာ\",
                 disable_web_page_preview=True,
             )
             return
-        if result.status == "quota_reached":
-            bot.send_message(chat_id, f"Your daily limit of <b>{DAILY_LIMIT}</b> links has been reached. It resets at midnight ({html.escape(str(TIMEZONE))}).")
+        if result.status == \"quota_reached\":
+            bot.send_message(chat_id, f\"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{DAILY_LIMIT}</b> ခု ပြည့်သွားပြိကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ\")
             return
-        if result.status == "inventory_empty":
-            bot.send_message(chat_id, "No authorized links are currently available. Please try again later.")
+        if result.status == \"inventory_empty\":
+            bot.send_message(chat_id, \"လောလောဆယ် Link များ ကုန်နေပါတယ်ကွာ။ နောက်မှ ထပ်စမ်းကြည့်ကွာဆောတီးကွာ")
             return
-        bot.send_message(chat_id, "Please tap “Get ready link” again.")
+        bot.send_message(chat_id, \"နှိပ်“Link ရယူရန် 🔗” ကို ထပ်နှိပ်ပေးကွာ\")
         return
 
     if not is_admin(user_id):
-        bot.send_message(chat_id, "This admin function is not available for your account.")
+        bot.send_message(chat_id, \"ဒီလုပ်ဆောင်ချက်က Admin အတွက်သာ ဖြစ်ပါတယ်။\")
         return
 
-    if call.data == "admin_upload":
+    if call.data == \"admin_upload\":
         with _pending_lock:
             _pending_upload_admins.add(user_id)
         bot.send_message(
             chat_id,
-            "Send one UTF-8 <code>.txt</code> file now. Put one authorized <code>http://</code> or <code>https://</code> URL on each line. "
-            "Duplicate, invalid, and already-stored rows will be ignored. Send /cancel to stop.",
+            \"ယခု <code>.txt</code> ဖိုင်တစ်ခုကို ပို့ပေးပါ။ စာကြောင်းတစ်ကြောင်းမှာ Link (URL) တစ်ခုစီ ထည့်ပေးပါ။\\nထပ်နေသော၊ မှားယွင်းနေသော Link များကို အလိုအလျောက် ပယ်ဖျက်ပေးပါမည်။\\nရပ်ချင်ပါက /cancel ကို နှိပ်ပါ။\",
         )
         return
 
-    if call.data == "admin_stats":
+    if call.data == \"admin_stats\":
         stats = store.stats()
         bot.send_message(
             chat_id,
-            "Inventory status\n\n"
-            f"Available: <b>{stats['available']}</b>\n"
-            f"Assigned: <b>{stats['assigned']}</b>\n"
-            f"Total: <b>{stats['total']}</b>",
+            \"လက်ကျန်စာရင်း အခြေအနေ\\n\\n\"
+            f\"ရနိုင်သေးသောအရေအတွက်: <b>{stats['available']}</b>\\n\"
+            f\"ယူပြီးသောအရေအတွက်: <b>{stats['assigned']}</b>\\n\"
+            f\"စုစုပေါင်း: <b>{stats['total']}</b>\",
         )
 
 # ==========================================
@@ -321,26 +323,26 @@ def handle_callback(call: types.CallbackQuery) -> None:
 def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
     acquired = file_lock.acquire(timeout=90)
     if not acquired:
-        bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu())
+        bot.send_message(chat_id, \"ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး\", reply_markup=get_main_menu())
         return
 
-    input_path = "input.txt"
+    input_path = \"input.txt\"
 
     try:
         if stop_flags.get(user_id):
             if progress_msg_id:
-                bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="⏹ မလုပ်ပေးတော့ဘူးကွာ")
+                bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text=\"⏹ မလုပ်ပေးတော့ဘူးကွာ\")
             return
 
         if progress_msg_id:
-            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Token ပြန်ပေးမယ် စောင့်နေ.")
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text=\"TXT ရပြီ Token ပြန်ပေးမယ် စောင့်နေ.\")
 
         fixed_content = normalize_cookie_text(content_bytes)
-        with open(input_path, "wb") as f:
+        with open(input_path, \"wb\") as f:
             f.write(fixed_content)
 
         if stop_flags.get(user_id):
-            bot.send_message(chat_id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
+            bot.send_message(chat_id, \"⏹ မလုပ်ပေးတော့ဘူးကွ\", reply_markup=get_main_menu())
             return
 
         proc = subprocess.Popen(
@@ -354,30 +356,30 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
         except subprocess.TimeoutExpired:
             proc.kill()
             stdout, stderr = proc.communicate()
-            bot.send_message(chat_id, "⏱️ ကြာလွန်းလို့ ရပ်လိုက်ပြီ ထပ်ကြိုးစားပေးကွာ", reply_markup=get_main_menu())
+            bot.send_message(chat_id, \"⏱️ ကြာလွန်းလို့ ရပ်လိုက်ပြီ ထပ်ကြိုးစားပေးကွာ\", reply_markup=get_main_menu())
             return
         finally:
             running_process.pop(user_id, None)
 
         if stop_flags.get(user_id):
-            bot.send_message(chat_id, "⏹ မလုပ်ပေးတော့ဘူးကွ", reply_markup=get_main_menu())
+            bot.send_message(chat_id, \"⏹ မလုပ်ပေးတော့ဘူးကွ\", reply_markup=get_main_menu())
             return
 
-        match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', stdout or "")
+        match = re.search(r'(https://netflix\\.com/\\?nftoken=[^\\s]+)', stdout or \"\")
         if match:
             clean_url = match.group(1)
             reply = (
-                f"ရပြီဝေ့:\n\n{clean_url}\n\n"
-                "⚠️ **သတိထား** - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်"
+                f\"ရပြီဝေ့:\\n\\n{clean_url}\\n\\n\"
+                \"⚠️ **သတိထား** - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\"
             )
             bot.send_message(chat_id, reply, parse_mode='Markdown', reply_markup=get_main_menu())
         else:
-            err_snippet = (stderr or "Cookie ပျက်နေတာထင်တယ် နောက်တစ်ခုစမ်းကွာ")[:500]
-            bot.send_message(chat_id, "Token မတွေ့ဘူး နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
-            bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id}):\n```\n{err_snippet}\n```", parse_mode="Markdown")
+            err_snippet = (stderr or \"Cookie ပျက်နေတာထင်တယ် နောက်တစ်ခုစမ်းကွာ\")[:500]
+            bot.send_message(chat_id, \"Token မတွေ့ဘူး နောက်တစ်ခုစမ်း\", reply_markup=get_main_menu())
+            bot.send_message(ADMIN_ID, f\"⚠️ Token မတွေ့ဘူး (user {user_id}):\\n```\\n{err_snippet}\\n```\", parse_mode=\"Markdown\")
 
     except Exception as e:
-        bot.send_message(chat_id, f"Error တက်ကုန်ပြီဟ: {e}", reply_markup=get_main_menu())
+        bot.send_message(chat_id, f\"Error တက်ကုန်ပြီဟ: {e}\", reply_markup=get_main_menu())
     finally:
         running_process.pop(user_id, None)
         if os.path.exists(input_path):
@@ -388,7 +390,7 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
 # FILE & MESSAGE HANDLERS
 # ==========================================
 
-@bot.message_handler(content_types=["document"])
+@bot.message_handler(content_types=[\"document\"])
 def process_document_merged(message: types.Message):
     if message.from_user is None or message.document is None:
         return
@@ -402,34 +404,34 @@ def process_document_merged(message: types.Message):
 
     if upload_expected and is_admin(user_id):
         document = message.document
-        filename = document.file_name or "uploaded-links.txt"
-        valid_name = filename.lower().endswith(".txt")
-        valid_mime = document.mime_type in {None, "text/plain"}
+        filename = document.file_name or \"uploaded-links.txt\"
+        valid_name = filename.lower().endswith(\".txt\")
+        valid_mime = document.mime_type in {None, \"text/plain\"}
         
         if not valid_name or not valid_mime:
-            bot.reply_to(message, "Only a plain-text .txt file is accepted. The upload is still pending.")
+            bot.reply_to(message, \".txt ဖိုင်အမျိုးအစားသာ လက်ခံပါသည်။ ဖိုင်တင်ရန် စောင့်ဆိုင်းနေဆဲဖြစ်ပါသည်။\")
             return
         if document.file_size and document.file_size > MAX_UPLOAD_BYTES:
-            bot.reply_to(message, f"The file is too large. Maximum allowed size is {MAX_UPLOAD_BYTES // 1024} KB.")
+            bot.reply_to(message, f\"ဖိုင်ဆိုဒ် ကြီးလွန်းနေပါသည်။ အများဆုံး {MAX_UPLOAD_BYTES // 1024} KB သာ လက်ခံပါသည်။\")
             return
 
         try:
             file_info = bot.get_file(document.file_id)
             raw_data = bot.download_file(file_info.file_path)
-            text = raw_data.decode("utf-8-sig")
+            text = raw_data.decode(\"utf-8-sig\")
         except UnicodeDecodeError:
-            bot.reply_to(message, "The file must be UTF-8 text. The upload is still pending.")
+            bot.reply_to(message, \"ဖိုင်သည် UTF-8 text ဖြစ်ရပါမည်။ ဖိုင်တင်ရန် စောင့်ဆိုင်းနေဆဲဖြစ်ပါသည်။\")
             return
         except Exception:
-            logger.exception("Could not download an admin TXT file")
-            bot.reply_to(message, "The file could not be read. Please try again.")
+            logger.exception(\"Could not download an admin TXT file\")
+            bot.reply_to(message, \"ဖိုင်ကို ဖတ်၍မရပါ။ ကျေးဇူးပြု၍ ထပ်မံကြိုးစားပါ။\")
             return
 
         try:
             result = store.add_links(text.splitlines(), filename)
         except Exception:
-            logger.exception("Could not import TXT links")
-            bot.reply_to(message, "Import failed; no confirmation was made. Please try again.")
+            logger.exception(\"Could not import TXT links\")
+            bot.reply_to(message, \"Import လုပ်ခြင်း မအောင်မြင်ပါ။ ပြန်လည်ကြိုးစားကြည့်ပါ။\")
             return
 
         with _pending_lock:
@@ -438,11 +440,11 @@ def process_document_merged(message: types.Message):
         stats = store.stats()
         bot.reply_to(
             message,
-            "Import complete.\n\n"
-            f"Added: <b>{result.added}</b>\n"
-            f"Skipped as duplicate: <b>{result.duplicates}</b>\n"
-            f"Skipped as invalid: <b>{result.invalid}</b>\n"
-            f"Available inventory: <b>{stats['available']}</b>",
+            \"Import လုပ်ခြင်း ပြီးစီးပါပြီ。\\n\\n\"
+            f\"အသစ်ထည့်သွင်းမှု: <b>{result.added}</b>\\n\"
+            f\"ထပ်နေ၍ပယ်ဖျက်မှု: <b>{result.duplicates}</b>\\n\"
+            f\"အမှားကြောင့်ပယ်ဖျက်မှု: <b>{result.invalid}</b>\\n\"
+            f\"လက်ရှိရနိုင်သောအရေအတွက်: <b>{stats['available']}</b>\",
         )
         return
 
@@ -451,10 +453,10 @@ def process_document_merged(message: types.Message):
     file_name = message.document.file_name.lower()
 
     if not file_name.endswith('.txt'):
-        bot.reply_to(message, ".txt ဖိုင်ပဲပို့ဟ", reply_markup=get_main_menu())
+        bot.reply_to(message, \".txt ဖိုင်ပဲပို့ဟ\", reply_markup=get_main_menu())
         return
 
-    progress_msg = bot.reply_to(message, "ဖိုင်ငါရပြီ - အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
+    progress_msg = bot.reply_to(message, \"ဖိုင်ငါရပြီ - အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...\")
 
     def task():
         file_info = bot.get_file(message.document.file_id)
@@ -467,7 +469,7 @@ def process_document_merged(message: types.Message):
 def handle_text_merged(message: types.Message):
     if message.from_user is None or message.text.startswith('/'):
         return
-    if message.text in ["/start 🔄", STOP_BTN, BROADCAST_CANCEL_BTN]:
+    if message.text in [\"/start 🔄\", STOP_BTN, BROADCAST_CANCEL_BTN]:
         return
 
     log_user(message)
@@ -478,7 +480,7 @@ def handle_text_merged(message: types.Message):
     with _pending_lock:
         upload_expected = chat_id in _pending_upload_admins
     if upload_expected and is_admin(chat_id):
-        bot.reply_to(message, "Please send the expected .txt document, or use /cancel.")
+        bot.reply_to(message, \"ကျေးဇူးပြု၍ .txt ဖိုင်ကို ပို့ပေးပါ သို့မဟုတ် /cancel ကိုနှိပ်ပါ။\")
         return
 
     # Check for Admin Broadcast
@@ -494,14 +496,14 @@ def handle_text_merged(message: types.Message):
                 failed += 1
         bot.send_message(
             chat_id,
-            f"📢 Broadcast ပို့ပြီးပါပြီ。\n✅ အောင်မြင်: {sent}\n❌ မအောင်မြင်: {failed}",
+            f\"📢 Broadcast ပို့ပြီးပါပြီ。\\n✅ အောင်မြင်: {sent}\\n❌ မအောင်မြင်: {failed}\",
             reply_markup=get_main_menu()
         )
         return
 
     # Normal user sending pasted cookie text
     stop_flags[user_id] = False
-    progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
+    progress_msg = bot.reply_to(message, \"စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...\")
 
     def task():
         run_generator_task(chat_id, user_id, message.text.encode('utf-8'), progress_msg.message_id)
@@ -512,7 +514,20 @@ def handle_text_merged(message: types.Message):
 # MAIN EXECUTION
 # ==========================================
 
-if __name__ == "__main__":
+if __name__ == \"__main__\":
     Thread(target=run_web, daemon=True).start()
-    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ် နှင့် Link Database ဖြင့်)...")
+    logger.info(\"Bot စတင် အလုပ်လုပ်နေပါပြီ (Queue စနစ် နှင့် Link Database ဖြင့်)...\")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
+"""
+
+with open("combined_bot.py", "w", encoding="utf-8") as f:
+    f.write(myanmar_bot_code)
+
+with zipfile.ZipFile("bot_myanmar_version.zip", "w") as zipf:
+    zipf.write("combined_bot.py")
+    zipf.write("nf-token-generator.py")
+    zipf.write("requirements.txt")
+    zipf.write("storage.py")
+
+print("Zip created")
+
