@@ -150,8 +150,11 @@ def increment_quota(uid: str, date_str: str) -> int:
 def get_available_cookies_count() -> int:
     try:
         res = supabase.table('cookies').select('id', count='exact').execute()
-        return res.count if res.count else 0
-    except Exception:
+        if res.count is not None:
+            return res.count
+        return len(res.data) if res.data else 0
+    except Exception as e:
+        logger.error(f"Count cookies error: {e}")
         return 0
 
 def is_admin(user_id: int) -> bool:
