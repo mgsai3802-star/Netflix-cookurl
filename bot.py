@@ -515,10 +515,21 @@ def handle_callback(call: types.CallbackQuery) -> None:
         bot.register_next_step_handler(msg, process_rm_vip)
 
     elif call.data == "panel_list_vip":
-        if not vip_users: 
-            bot.send_message(chat_id, "🌟 VIP User မရှိသေးပါ။")
-        else: 
-            bot.send_message(chat_id, f"🌟 <b>VIP User များ ({len(vip_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in vip_users]), parse_mode="HTML")
+        try:
+            res = supabase.table('vip_users').select('user_id').execute()
+            db_vips = [v['user_id'] for v in res.data] if res.data else []
+            if not db_vips:
+                bot.send_message(chat_id, "🌟 VIP User မရှိသေးပါ။")
+            else:
+                vip_users.clear()
+                vip_users.update(db_vips)
+                text = f"🌟 <b>VIP User များ ({len(db_vips)} ဦး):</b>\n\n"
+                for uid in db_vips:
+                    uname = active_users.get(str(uid), "Unknown")
+                    text += f"▪️ {uname} (ID: <code>{uid}</code>)\n"
+                bot.send_message(chat_id, text, parse_mode="HTML")
+        except Exception as e:
+            bot.send_message(chat_id, f"Error: {e}")
 
     elif call.data == "panel_ban":
         msg = bot.send_message(chat_id, "🚫 Block ပြုလုပ်မည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
@@ -529,11 +540,21 @@ def handle_callback(call: types.CallbackQuery) -> None:
         bot.register_next_step_handler(msg, process_unban)
 
     elif call.data == "panel_list_banned":
-        if not banned_users: 
-            bot.send_message(chat_id, "🚫 Block ထားသော User မရှိသေးပါ။")
-        else: 
-            bot.send_message(chat_id, f"🚫 <b>Block ထားသော User များ ({len(banned_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in banned_users]), parse_mode="HTML")
-
+        try:
+            res = supabase.table('banned_users').select('user_id').execute()
+            db_banned = [b['user_id'] for b in res.data] if res.data else []
+            if not db_banned:
+                bot.send_message(chat_id, "🚫 Block ထားသော User မရှိသေးပါ။")
+            else:
+                banned_users.clear()
+                banned_users.update(db_banned)
+                text = f"🚫 <b>Block ထားသော User များ ({len(db_banned)} ဦး):</b>\n\n"
+                for uid in db_banned:
+                    uname = active_users.get(str(uid), "Unknown")
+                    text += f"▪️ {uname} (ID: <code>{uid}</code>)\n"
+                bot.send_message(chat_id, text, parse_mode="HTML")
+        except Exception as e:
+            bot.send_message(chat_id, f"Error: {e}")
     elif call.data == "panel_list_users":
         try:
             # Supabase ထဲမှ User စာရင်း အကုန်လုံးကို တိုက်ရိုက်ဆွဲယူခြင်း
