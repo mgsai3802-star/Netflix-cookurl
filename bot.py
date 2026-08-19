@@ -527,16 +527,29 @@ def handle_callback(call: types.CallbackQuery) -> None:
         if not banned_users: bot.send_message(chat_id, "🚫 Block ထားသော User မရှိသေးပါ။")
         else: bot.send_message(chat_id, f"🚫 <b>Block ထားသော User များ ({len(banned_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in banned_users]), parse_mode="HTML")
 
-    elif call.data == "panel_list_users":
-        if not active_users: bot.send_message(chat_id, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
-        else:
-            text = f"👥 <b>စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး</b>\n\n"
-            for uid, uname in active_users.items():
-                status = ""
-                if uid in banned_users: status = " (🚫 Blocked)"
-                elif uid in vip_users: status = " (🌟 VIP)"
-                text += f"▪️ {uname} (ID: <code>{uid}</code>){status}\n"
-            bot.send_message(chat_id, text, parse_mode="HTML")
+        elif call.data == "panel_list_users":
+        try:
+            # Supabase ထဲမှ User စာရင်း အကုန်လုံးကို တိုက်ရိုက်ဆွဲယူခြင်း
+            res = supabase.table('users').select('user_id, username').execute()
+            db_users = res.data or []
+            
+            if not db_users:
+                bot.send_message(chat_id, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
+            else:
+                text = f"👥 <b>စုစုပေါင်း အသုံးပြုသူ: {len(db_users)} ဦး</b>\n\n"
+                for u in db_users:
+                    uid = str(u['user_id'])
+                    uname = u.get('username') or "Unknown"
+                    status = ""
+                    if uid in banned_users: 
+                        status = " (🚫 Blocked)"
+                    elif uid in vip_users: 
+                        status = " (🌟 VIP)"
+                    text += f"▪️ {uname} (ID: <code>{uid}</code>){status}\n"
+                    
+                bot.send_message(chat_id, text, parse_mode="HTML")
+        except Exception as e:
+            bot.send_message(chat_id, f"Users ဖတ်ရာတွင် Error တက်ပါသည်: {e}")
 
     elif call.data == "panel_clear":
         try:
