@@ -1,4 +1,4 @@
-"""Combined Telegram bot for Bulk ZIP Cookie, Supabase Storage, User Blocking, VIP System, and Admin Panel."""
+"""Combined Telegram bot with Users, VIPs, Bans, Cookies, and Settings fully stored in Supabase."""
 
 from __future__ import annotations
 
@@ -30,39 +30,21 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
-    print("Error: BOT_TOKEN, SUPABASE_URL, နှင့် SUPABASE_KEY တို့ကို Environment Variables တွင် ထည့်သွင်းရပါမည်။")
+    print("Error: BOT_TOKEN, SUPABASE_URL, and SUPABASE_KEY must be set in Environment Variables.")
     exit(1)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Specific Admin ID & User List
+# Specific Admin ID
 ADMIN_ID = 1847021130
 ADMIN_IDS = {ADMIN_ID}
 
-active_users = {
-    "1847021130": "Ren2512",
-    "5786095389": "thureinlinlinn",
-    "6609444194": "luke65214",
-    "1833851827": "Aung",
-    "6050862261": "khajhar",
-    "1240231180": "VPNetwork25",
-    "5555183383": "Sa Nay Maung",
-    "1510379959": "Khine",
-    "8029459862": "digitalworldmyanmar1212",
-    "6445480256": "NyeinCHANAUNG7",
-    "7814624012": "aeiou690",
-    "8577702613": "Reno366",
-    "7378715486": "NyeinChaNAungW",
-    "5604493826": "Akai888",
-    "5272159743": "phetkyam",
-    "5389816539": "Hiza2026",
-}
-
-# In-Memory Cache for Quick Checks (Synced with Supabase)
+# In-Memory Cache for fast lookups
+active_users: dict[str, str] = {}
 banned_users: set[str] = set()
 vip_users: set[str] = set()
 
-DAILY_LIMIT = int(os.getenv("DAILY_LIMIT", "3"))
+DEFAULT_DAILY_LIMIT = int(os.getenv("DAILY_LIMIT", "3"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))) # 20MB for ZIP
 
 def configured_timezone() -> ZoneInfo:
@@ -108,17 +90,37 @@ COOKIE_LINE_RE = re.compile(
 # SUPABASE & HELPER FUNCTIONS
 # ==========================================
 
-def load_cached_users():
-    """Load VIP and Banned lists from Supabase on startup"""
+def load_cached_data():
+    """Load Users, VIPs, and Banned lists from Supabase on startup"""
     try:
+        # Load all registered users
+        users_res = supabase.table('users').select('user_id, username').execute()
+        for u in users_res.data:
+            active_users[u['user_id']] = u.get('username') or 'Unknown'
+
+        # Load VIPs
         vip_res = supabase.table('vip_users').select('user_id').execute()
-        for v in vip_res.data: vip_users.add(v['user_id'])
+        for v in vip_res.data:
+            vip_users.add(v['user_id'])
         
+        # Load Banned
         ban_res = supabase.table('banned_users').select('user_id').execute()
-        for b in ban_res.data: banned_users.add(b['user_id'])
-        logger.info("Loaded VIPs and Banned users from Supabase.")
+        for b in ban_res.data:
+            banned_users.add(b['user_id'])
+            
+        logger.info(f"Loaded {len(active_users)} Users, {len(vip_users)} VIPs, {len(banned_users)} Banned from Supabase.")
     except Exception as e:
-        logger.error(f"Error loading cached users: {e}")
+        logger.error(f"Error loading cached data: {e}")
+
+def get_daily_limit() -> int:
+    """Fetch daily limit dynamically from Supabase bot_settings table"""
+    try:
+        res = supabase.table('bot_settings').select('value').eq('key', 'daily_limit').execute()
+        if res.data:
+            return int(res.data[0]['value'])
+    except Exception as e:
+        logger.error(f"Get daily limit error: {e}")
+    return DEFAULT_DAILY_LIMIT
 
 def get_quota(uid: str, date_str: str) -> int:
     record_id = f"{uid}_{date_str}"
@@ -165,10 +167,19 @@ def current_date() -> str:
     return datetime.now(TIMEZONE).date().isoformat()
 
 def log_user(message):
+    """Record active user into Supabase and In-memory dict"""
     user_id = str(message.chat.id)
     username = message.from_user.username or message.from_user.first_name or "Unknown"
-    if user_id not in active_users:
+    
+    if user_id not in active_users or active_users[user_id] != username:
         active_users[user_id] = username
+        try:
+            supabase.table('users').upsert({
+                'user_id': user_id,
+                'username': username
+            }).execute()
+        except Exception as e:
+            logger.error(f"Error upserting user to DB: {e}")
 
 def normalize_cookie_text(raw_bytes: bytes) -> bytes:
     text = raw_bytes.decode('utf-8', errors='ignore')
@@ -410,17 +421,19 @@ def handle_callback(call: types.CallbackQuery) -> None:
         if is_admin(user_id) or is_vip(user_id):
             bot.send_message(chat_id, "👑 သင်ဟာ Admin/VIP ဖြစ်တဲ့အတွက် Quota အကန့်အသတ်မရှိ (Unlimited) သုံးနိုင်ပါတယ်။")
         else:
+            limit_val = get_daily_limit()
             used = get_quota(str(user_id), current_date())
-            remaining = max(0, DAILY_LIMIT - used)
-            bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
+            remaining = max(0, limit_val - used)
+            bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{limit_val}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
         return
 
     elif call.data == "claim_link":
-        user_limit = 999999 if (is_admin(user_id) or is_vip(user_id)) else DAILY_LIMIT
+        limit_val = get_daily_limit()
+        user_limit = 999999 if (is_admin(user_id) or is_vip(user_id)) else limit_val
         used = get_quota(str(user_id), current_date())
         
         if used >= user_limit:
-            bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{DAILY_LIMIT}</b> ခု ပြည့်သွားပြီကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ")
+            bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{limit_val}</b> ခု ပြည့်သွားပြီကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ")
             return
 
         def process_claim_task():
@@ -458,7 +471,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
                 if clean_url:
                     new_used = increment_quota(str(user_id), current_date())
                     safe_url = html.escape(clean_url, quote=True)
-                    quota_info = "👑 <b>VIP/Admin Account (Unlimited)</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{DAILY_LIMIT}</b> ခု သုံးထားတယ်ကွာ — <b>{max(0, DAILY_LIMIT - new_used)}</b> ခု ကျန်သေးတယ်ကွာ"
+                    quota_info = "👑 <b>VIP/Admin Account (Unlimited)</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ — <b>{max(0, limit_val - new_used)}</b> ခု ကျန်သေးတယ်ကွာ"
 
                     bot.edit_message_text(
                         chat_id=chat_id,
@@ -695,7 +708,7 @@ def handle_text_merged(message: types.Message):
 # ==========================================
 
 if __name__ == "__main__":
-    load_cached_users()
+    load_cached_data()
     Thread(target=run_web, daemon=True).start()
-    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Supabase Storage, VIP & Block စနစ် ဖြင့်)...")
+    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Supabase Dynamic Users, Limits, VIP & Block စနစ် ဖြင့်)...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
