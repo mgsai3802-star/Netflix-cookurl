@@ -512,8 +512,10 @@ def handle_callback(call: types.CallbackQuery) -> None:
         bot.register_next_step_handler(msg, process_rm_vip)
 
     elif call.data == "panel_list_vip":
-        if not vip_users: bot.send_message(chat_id, "🌟 VIP User မရှိသေးပါ။")
-        else: bot.send_message(chat_id, f"🌟 <b>VIP User များ ({len(vip_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in vip_users]), parse_mode="HTML")
+        if not vip_users: 
+            bot.send_message(chat_id, "🌟 VIP User မရှိသေးပါ။")
+        else: 
+            bot.send_message(chat_id, f"🌟 <b>VIP User များ ({len(vip_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in vip_users]), parse_mode="HTML")
 
     elif call.data == "panel_ban":
         msg = bot.send_message(chat_id, "🚫 Block ပြုလုပ်မည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
@@ -524,10 +526,12 @@ def handle_callback(call: types.CallbackQuery) -> None:
         bot.register_next_step_handler(msg, process_unban)
 
     elif call.data == "panel_list_banned":
-        if not banned_users: bot.send_message(chat_id, "🚫 Block ထားသော User မရှိသေးပါ။")
-        else: bot.send_message(chat_id, f"🚫 <b>Block ထားသော User များ ({len(banned_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in banned_users]), parse_mode="HTML")
+        if not banned_users: 
+            bot.send_message(chat_id, "🚫 Block ထားသော User မရှိသေးပါ။")
+        else: 
+            bot.send_message(chat_id, f"🚫 <b>Block ထားသော User များ ({len(banned_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in banned_users]), parse_mode="HTML")
 
-        elif call.data == "panel_list_users":
+    elif call.data == "panel_list_users":
         try:
             # Supabase ထဲမှ User စာရင်း အကုန်လုံးကို တိုက်ရိုက်ဆွဲယူခြင်း
             res = supabase.table('users').select('user_id, username').execute()
@@ -699,12 +703,21 @@ def handle_text_merged(message: types.Message):
         awaiting_broadcast[user_id] = False
         broadcast_text = message.text
         sent, failed = 0, 0
-        for uid in active_users.keys():
-            if uid in banned_users: continue
-            try:
-                bot.send_message(int(uid), broadcast_text)
-                sent += 1
-            except Exception: failed += 1
+        try:
+            # Fetch all users from Supabase for broadcast
+            res = supabase.table('users').select('user_id').execute()
+            if res.data:
+                for u in res.data:
+                    uid = u['user_id']
+                    if uid in banned_users: continue
+                    try:
+                        bot.send_message(int(uid), broadcast_text)
+                        sent += 1
+                    except Exception: 
+                        failed += 1
+        except Exception as e:
+            logger.error(f"Broadcast error fetching users: {e}")
+            
         bot.send_message(chat_id, f"📢 Broadcast ပို့ပြီးပါပြီ。\n✅ အောင်မြင်: {sent}\n❌ မအောင်မြင်: {failed}", reply_markup=get_main_menu())
         return
 
