@@ -1,4 +1,4 @@
-"""Telegram Netflix Cookie Bot (Anonymous & Group VIP Mode)"""
+"""Telegram Netflix Cookie Bot (Anonymous VIP Mode & Clean Admin)"""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Specific Admin ID (အက်မင်က Private Chat မှာ ဖိုင်တင်ရန်အတွက်သာ)
+# Specific Admin ID (အက်မင်က Private Chat မှာ /admin နဲ့ ZIP တင်ရန်အတွက်သာ)
 ADMIN_ID = 1847021130
 ADMIN_IDS = {ADMIN_ID}
 
@@ -111,7 +111,7 @@ def is_banned(user_id: int | str) -> bool:
     return str(user_id) in banned_users
 
 def is_chat_allowed(chat_id: int, user_id: int, thread_id: int = None) -> bool:
-    # Admin က Private Chat ထဲမှာ ZIP တင်တာတွေ လုပ်လို့ရရန်
+    # Admin က Private Chat ထဲမှာ /admin သုံးတာနဲ့ ZIP တင်တာတွေ လုပ်လို့ရရန်
     if user_id in ADMIN_IDS and chat_id == user_id:
         return True
     # သတ်မှတ်ထားသော Group နှင့် Topic ထဲတွင်သာ အလုပ်လုပ်မည်
@@ -214,14 +214,20 @@ def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
 # KEYBOARDS
 # ==========================================
 
-def public_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
+def public_keyboard() -> types.InlineKeyboardMarkup:
+    """ဘယ်သူ့အတွက်မဆို သန့်ရှင်းသော User Keyboard သက်သက်"""
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     keyboard.add(types.InlineKeyboardButton("Netflix လင့်ခ် ထုတ်ရန် 🎬", callback_data="claim_netflix"))
-    
-    if is_admin(user_id):
-        keyboard.add(types.InlineKeyboardButton("Netflix ZIP တင်ရန် 📤", callback_data="upload_netflix"))
-        keyboard.add(types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="admin_stats"))
     return keyboard
+
+def admin_panel_keyboard() -> types.InlineKeyboardMarkup:
+    kb = types.InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        types.InlineKeyboardButton("Netflix ZIP တင်ရန် 📤", callback_data="upload_netflix"),
+        types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="admin_stats"),
+        types.InlineKeyboardButton("🗑 Clear Pool", callback_data="panel_clear_cookies"),
+    )
+    return kb
 
 # ==========================================
 # WEB SERVER
@@ -251,10 +257,19 @@ def send_welcome_and_menu(message):
     if is_banned(user_id):
         return
 
-    bot.reply_to(message, "🎬 <b>Netflix Cookie Bot (VIP Mode)</b>\nအောက်ပါခလုတ်ကို နှိပ်၍ အကောင့်ထုတ်ယူနိုင်ပါသည်:", reply_markup=public_keyboard(user_id), disable_web_page_preview=True)
+    bot.reply_to(message, "🎬 <b>Netflix Cookie Bot</b>\nအောက်ပါခလုတ်ကို နှိပ်၍ အကောင့်ထုတ်ယူနိုင်ပါသည်:", reply_markup=public_keyboard(), disable_web_page_preview=True)
+
+@bot.message_handler(commands=['admin'])
+def admin_panel_command(message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    # Private chat ထဲမှာ Admin သီးသန့်သုံးရန်
+    if user_id in ADMIN_IDS and chat_id == user_id:
+        bot.reply_to(message, "⚙️ <b>Admin Management Panel</b>\nအောက်ပါ လုပ်ဆောင်ချက်များကို ရွေးချယ်ပါ:", reply_markup=admin_panel_keyboard())
 
 # ==========================================
-# CALLBACK QUERIES (ANONYMOUS & UNLIMITED)
+# CALLBACK QUERIES
 # ==========================================
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -301,7 +316,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
 
                 if final_result:
                     safe_url = html.escape(final_result, quote=True)
-                    # ဘယ်သူသုံးတယ်ဆိုတာ မဖော်ပြဘဲ သန့်ရှင်းစွာ ပို့ပေးမည် (Anonymous)
                     reply_text = f"🎬 <b>Netflix အကောင့်ရပါပြီ:</b>\n\n{safe_url}\n\n⚠️ <i>(ဒီလင့်ခ်က 15 မိနစ်ခန့်သာ ခံပါမည်)</i>"
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=reply_text, disable_web_page_preview=True, parse_mode="HTML")
                 else:
@@ -314,7 +328,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
         Thread(target=process_claim_task).start()
         return
 
-    # Admin Panel Actions (Private Chat only for Admin)
+    # Admin Panel Callbacks (Private Chat only for Admin)
     if not is_admin(user_id): return
 
     if call.data == "upload_netflix":
@@ -324,6 +338,16 @@ def handle_callback(call: types.CallbackQuery) -> None:
     elif call.data == "admin_stats":
         n_count = get_stats()
         bot.send_message(chat_id, f"📋 <b>လက်ကျန်စာရင်း:</b> 🎬 Netflix Cookie: <b>{n_count}</b> ခု", parse_mode="HTML")
+
+    elif call.data == "panel_clear_cookies":
+        try:
+            res = supabase.table('cookies').select('id', count='exact').execute()
+            total = res.count if res.count is not None else 0
+            if total > 0:
+                supabase.table('cookies').delete().gt('id', -1).execute()
+            bot.send_message(chat_id, f"🗑 <b>Netflix Cookie များ ရှင်းလင်းပြီးပါပြီ။</b> ဖျက်လိုက်သည့် အရေအတွက်: <b>{total}</b> ခု", parse_mode="HTML")
+        except Exception as e:
+            bot.send_message(chat_id, f"Error: {e}")
 
 # ==========================================
 # FILE UPLOAD HANDLERS (ADMIN)
@@ -383,5 +407,5 @@ def process_document_merged(message: types.Message):
 if __name__ == "__main__":
     load_cached_data()
     Thread(target=run_web, daemon=True).start()
-    logger.info("Netflix Bot Started (Anonymous VIP Mode)...")
+    logger.info("Netflix Bot Started (Clean User View & Admin /admin command)...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
