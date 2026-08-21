@@ -28,6 +28,7 @@ from supabase import create_client, Client
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+VERCEL_URL = "https://urlchatgyi-mts9q34mo-mgsai3802-5524s-projects.vercel.app"
 
 if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
     print("Error: BOT_TOKEN, SUPABASE_URL, and SUPABASE_KEY must be set in Environment Variables.")
@@ -248,29 +249,26 @@ def check_cookie_active(content_bytes: bytes) -> bool:
         return False
 
 def get_chatgpt_token(content_bytes: bytes) -> str | None:
-    """ChatGPT Token Extraction via Requests"""
+    """ChatGPT Token Local Extraction (Cloudflare Bypass)"""
     try:
         text = content_bytes.decode('utf-8', errors='ignore')
-        cookies = {}
+        # Look for __Secure-next-auth.session-token or sessionToken
+        m = re.search(r'(__Secure-next-auth\.session-token|sessionToken|access_token)=([^\s;]+)', text)
+        if m:
+            return m.group(2)
+        
+        # Netscape tab-separated format check
         for line in text.splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('#'): continue
             parts = re.split(r'\t+', stripped)
             if len(parts) >= 7:
-                cookies[parts[5]] = parts[6]
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Referer": "https://chatgpt.com/",
-        }
-        res = requests.get("https://chatgpt.com/api/auth/session", cookies=cookies, headers=headers, timeout=15)
-        
-        if res.status_code == 200:
-            data = res.json()
-            return data.get("accessToken")
+                name = parts[5]
+                value = parts[6]
+                if name in ["__Secure-next-auth.session-token", "sessionToken", "access_token"]:
+                    return value
     except Exception as e:
-        logger.error(f"ChatGPT extraction error: {e}")
+        logger.error(f"ChatGPT local extraction error: {e}")
     return None
 
 def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
@@ -494,10 +492,9 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     content_text = res.data[0]['content']
                     content_bytes = content_text.encode('utf-8')
 
-                    # Delete it immediately so others don't claim it
-                    supabase.table(table_name).delete().eq('id', cookie_id).execute()
-
                     if is_netflix:
+                        # For Netflix, delete then check
+                        supabase.table(table_name).delete().eq('id', cookie_id).execute()
                         if not check_cookie_active(content_bytes): continue
                         url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
                         if url_result:
@@ -506,8 +503,14 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     else:
                         token_result = get_chatgpt_token(content_bytes)
                         if token_result:
+                            # Delete only on success so we don't wipe out everything!
+                            supabase.table(table_name).delete().eq('id', cookie_id).execute()
                             final_result = token_result
                             break
+                        else:
+                            # If invalid, remove it so it doesn't loop forever on bad cookie
+                            supabase.table(table_name).delete().eq('id', cookie_id).execute()
+                            continue
 
                 if final_result:
                     new_used = increment_quota(str(user_id), current_date())
@@ -517,9 +520,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
                         safe_url = html.escape(final_result, quote=True)
                         reply_text = f"🎬 ရပြီဝေ့:\n\n{safe_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"
                     else:
-                        # Vercel URL ထည့်သွင်းထားသည်
-                        VERCEL_URL = "https://urlchatgyi-mts9q34mo-mgsai3802-5524s-projects.vercel.app" 
-                        
                         import urllib.parse
                         settings_json = f'{{"key":"{final_result}"}}'
                         encoded_settings = urllib.parse.quote(settings_json)
