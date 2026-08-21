@@ -305,7 +305,7 @@ def send_welcome_and_menu(message):
         bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
     log_user(message)
-    bot.reply_to(message, "မင်္ဂလာပါ ဝေ့ -Netflix Cookie ပါတဲ့ .txtဖိုင် ဖြစ်ဖြစ် textဖြစ်ဖြစ် ပို့လိုက်ကွာ", reply_markup=get_main_menu())
+    bot.reply_to(message, "မင်္ဂလာပါ ဝေ့ -Netflix Cookie ပါတဲ့ .txtဖိုင် ဖြစ်ဖြစ် textဖြစ်ဖြစ် ငါ့ကို ပေးလိုက်ကွာ", reply_markup=get_main_menu())
     bot.send_message(
         message.chat.id, "အောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး Admin တင်ပေးထားတဲ့ အသင့်သုံး link‌ တွေထုတ်ကွာ",
         reply_markup=public_keyboard(message.from_user.id), disable_web_page_preview=True
