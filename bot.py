@@ -30,7 +30,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 # သင်၏ Vercel Web App လင့်ခ် (index.html တင်ထားသည့် Vercel Domain)
-NETFLIX_WEB_URL = "https://urlchatgyi-mts9q34mo-mgsai3802-5524s-projects.vercel.app"
+NETFLIX_WEB_URL = "https://network-net.vercel.app"
 
 if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
     print("Error: BOT_TOKEN, SUPABASE_URL, and SUPABASE_KEY must be set in Environment Variables.")
