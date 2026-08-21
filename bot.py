@@ -274,6 +274,17 @@ def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
         if os.path.exists(input_path):
             os.remove(input_path)
 
+def run_generator_task(chat_id: int, user_id: str, content_bytes: bytes, message_id: int):
+    try:
+        url_result = execute_token_generation(content_bytes, user_id, chat_id)
+        if url_result:
+            safe_url = html.escape(url_result, quote=True)
+            bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=f"🎬 ရပြီဝေ့:\n\n{safe_url}", disable_web_page_preview=True)
+        else:
+            bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="❌ Token ထုတ်ယူ၍ မရပါ (Cookie အလုပ်မလုပ်ပါ)။")
+    except Exception as e:
+        bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=f"❌ Error: {e}")
+
 
 # ==========================================
 # KEYBOARDS
