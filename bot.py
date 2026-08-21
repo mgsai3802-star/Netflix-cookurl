@@ -1,4 +1,4 @@
-"""Telegram Netflix Cookie Bot (Supabase Database)"""
+"""Telegram Netflix Cookie Bot with Vercel Web Launcher (Supabase Database)"""
 
 from __future__ import annotations
 
@@ -28,6 +28,9 @@ from supabase import create_client, Client
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+# သင်၏ Vercel Web App လင့်ခ် (index.html တင်ထားသည့် Vercel Domain)
+NETFLIX_WEB_URL = "https://urlchatgyi-mts9q34mo-mgsai3802-5524s-projects.vercel.app"
 
 if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
     print("Error: BOT_TOKEN, SUPABASE_URL, and SUPABASE_KEY must be set in Environment Variables.")
@@ -278,8 +281,11 @@ def run_generator_task(chat_id: int, user_id: str, content_bytes: bytes, message
     try:
         url_result = execute_token_generation(content_bytes, user_id, chat_id)
         if url_result:
-            safe_url = html.escape(url_result, quote=True)
-            bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=f"🎬 ရပြီဝေ့:\n\n{safe_url}", disable_web_page_preview=True)
+            token_match = re.search(r'nftoken=([^\s]+)', url_result)
+            token_val = token_match.group(1) if token_match else url_result
+            web_app_link = f"{NETFLIX_WEB_URL}/?token={token_val}"
+            
+            bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=f"🎬 ရပြီဝေ့ (ဖုန်းဖြင့် ကြည့်ရန်):\n\n🔗 <a href='{web_app_link}'>Netflix ဝင်ရန် နှိပ်ပါ</a>", disable_web_page_preview=True)
         else:
             bot.edit_message_text(chat_id=chat_id, message_id=message_id, text="❌ Token ထုတ်ယူ၍ မရပါ (Cookie အလုပ်မလုပ်ပါ)။")
     except Exception as e:
@@ -474,8 +480,11 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     new_used = increment_quota(str(user_id), current_date())
                     quota_info = "👑 <b>VIP/Admin Account (Unlimited)</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ — <b>{max(0, limit_val - new_used)}</b> ခု ကျန်သေးတယ်ကွာ"
 
-                    safe_url = html.escape(final_result, quote=True)
-                    reply_text = f"🎬 ရပြီဝေ့:\n\n{safe_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"
+                    token_match = re.search(r'nftoken=([^\s]+)', final_result)
+                    token_val = token_match.group(1) if token_match else final_result
+                    web_app_link = f"{NETFLIX_WEB_URL}/?token={token_val}"
+
+                    reply_text = f"🎬 ရပြီဝေ့ (ဖုန်းဖြင့် ကြည့်ရန်):\n\n🔗 <a href='{web_app_link}'>Netflix ဝင်ရန် နှိပ်ပါ</a>\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=reply_text, disable_web_page_preview=True, parse_mode="HTML")
                 else:
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="လောလောဆယ် အဆင်ပြေသော Netflix Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။")
