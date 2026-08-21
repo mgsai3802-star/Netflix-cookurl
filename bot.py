@@ -29,6 +29,10 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
+# သတ်မှတ်ထားသော သီးသန့် Group နှင့် Topic (Thread) ID
+ALLOWED_GROUP_ID = -1004495699928
+ALLOWED_THREAD_ID = 782
+
 if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
     print("Error: BOT_TOKEN, SUPABASE_URL, and SUPABASE_KEY must be set in Environment Variables.")
     exit(1)
@@ -99,11 +103,11 @@ def load_cached_data():
         vip_res = supabase.table('vip_users').select('user_id').execute()
         for v in vip_res.data:
             vip_users.add(v['user_id'])
-         
+
         ban_res = supabase.table('banned_users').select('user_id').execute()
         for b in ban_res.data:
             banned_users.add(b['user_id'])
-            
+
         logger.info(f"Loaded {len(active_users)} Users, {len(vip_users)} VIPs, {len(banned_users)} Banned from Supabase.")
     except Exception as e:
         logger.error(f"Error loading cached data: {e}")
@@ -163,10 +167,17 @@ def is_vip(user_id: int | str) -> bool:
 def current_date() -> str:
     return datetime.now(TIMEZONE).date().isoformat()
 
+def is_chat_allowed(chat_id: int, user_id: int, thread_id: int = None) -> bool:
+    if user_id in ADMIN_IDS and chat_id == user_id:
+        return True
+    if chat_id == ALLOWED_GROUP_ID:
+        return thread_id == ALLOWED_THREAD_ID
+    return False
+
 def log_user(message):
     user_id = str(message.chat.id)
     username = message.from_user.username or message.from_user.first_name or "Unknown"
-    
+
     if user_id not in active_users or active_users[user_id] != username:
         active_users[user_id] = username
         try:
@@ -210,7 +221,7 @@ def check_cookie_active(content_bytes: bytes) -> bool:
             if not stripped or stripped.startswith('#'): continue
             m = COOKIE_LINE_RE.match(stripped)
             if m: cookie_dict[m.group('name')] = m.group('value')
-        
+
         if "NetflixId" not in cookie_dict:
             m = re.search(r'NetflixId=([^;,\s]+)', text)
             if m: cookie_dict["NetflixId"] = m.group(1)
@@ -293,7 +304,7 @@ def public_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(types.InlineKeyboardButton("Netflix လင့်ခ် 🎬", callback_data="claim_netflix"))
     keyboard.add(types.InlineKeyboardButton("ကျွန်ုပ်၏ Quota 📊", callback_data="my_quota"))
-    
+
     if is_admin(user_id):
         keyboard.add(types.InlineKeyboardButton("Netflix ZIP တင်ရန် 📤", callback_data="upload_netflix"))
         keyboard.add(types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="admin_stats"))
@@ -335,7 +346,14 @@ def run_web():
 
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome_and_menu(message):
-    if is_banned(message.chat.id):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    thread_id = getattr(message, 'message_thread_id', None)
+
+    if not is_chat_allowed(chat_id, user_id, thread_id):
+        return
+
+    if is_banned(chat_id):
         bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
     log_user(message)
@@ -406,7 +424,12 @@ def handle_callback(call: types.CallbackQuery) -> None:
 
     user_id = call.from_user.id
     chat_id = call.message.chat.id
+    thread_id = getattr(call.message, 'message_thread_id', None)
     bot.answer_callback_query(call.id)
+
+    if not is_chat_allowed(chat_id, user_id, thread_id):
+        bot.send_message(chat_id, "❌ ဒီ Bot ကို သတ်မှတ်ထားသော သီးသန့် Topic ထဲတွင်သာ အသုံးပြုနိုင်ပါသည်။")
+        return
 
     if is_banned(user_id):
         bot.send_message(chat_id, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
@@ -427,7 +450,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
         limit_val = get_daily_limit()
         user_limit = 999999 if (is_admin(user_id) or is_vip(user_id)) else limit_val
         used = get_quota(str(user_id), current_date())
-        
+
         if used >= user_limit:
             bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{limit_val}</b> ခု ပြည့်သွားပြီကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ")
             return
@@ -441,7 +464,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
             wait_msg = bot.send_message(chat_id, "⏳ Netflix Cookie ကို စစ်ဆေးပြီး လင့်ခ်ထုတ်နေပါပြီ ခဏစောင့်ကွာ...")
             try:
                 final_result = None
-                
+
                 while True:
                     res = supabase.table('cookies').select('id, content').limit(1).execute()
                     if not res.data:
@@ -482,7 +505,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
     if call.data == "upload_netflix":
         with _pending_lock: _pending_upload_admins[user_id] = "netflix"
         bot.send_message(chat_id, "🎬 <b>Netflix အတွက် .zip ဖိုင်ကို ပို့ပေးပါ။</b>\n(Zip ထဲတွင် Cookie <code>.txt</code> များ ပါဝင်ရပါမည်)", parse_mode="HTML")
-        
+
     elif call.data == "admin_stats":
         n_count = get_stats()
         bot.send_message(chat_id, f"📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\n🎬 Netflix Cookie: <b>{n_count}</b> ခု", parse_mode="HTML")
@@ -581,8 +604,12 @@ def handle_callback(call: types.CallbackQuery) -> None:
 @bot.message_handler(content_types=["document"])
 def process_document_merged(message: types.Message):
     if message.from_user is None or message.document is None: return
-    user_id = message.chat.id
-    str_user_id = str(user_id)
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    thread_id = getattr(message, 'message_thread_id', None)
+
+    if not is_chat_allowed(chat_id, user_id, thread_id):
+        return
 
     if is_banned(user_id):
         bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
@@ -597,7 +624,7 @@ def process_document_merged(message: types.Message):
     if upload_type == "netflix" and is_admin(user_id):
         document = message.document
         filename = document.file_name or "cookies.zip"
-        
+
         if not filename.lower().endswith(".zip"):
             bot.reply_to(message, "❌ .zip ဖိုင်အမျိုးအစားသာ လက်ခံပါသည်။ ဖိုင်တင်ရန် စောင့်ဆိုင်းနေဆဲဖြစ်ပါသည်။")
             return
@@ -610,7 +637,7 @@ def process_document_merged(message: types.Message):
         try:
             file_info = bot.get_file(document.file_id)
             raw_data = bot.download_file(file_info.file_path)
-            
+
             cookies_to_insert = []
             with zip_lib.ZipFile(io.BytesIO(raw_data)) as z:
                 for file_info_z in z.infolist():
@@ -619,7 +646,7 @@ def process_document_merged(message: types.Message):
                         cookies_to_insert.append({'content': content})
 
             extracted_count = len(cookies_to_insert)
-            
+
             chunk_size = 500
             for i in range(0, extracted_count, chunk_size):
                 chunk = cookies_to_insert[i:i + chunk_size]
@@ -630,21 +657,21 @@ def process_document_merged(message: types.Message):
             total_pool = get_stats()
 
             bot.edit_message_text(
-                chat_id=user_id, message_id=progress.message_id,
+                chat_id=chat_id, message_id=progress.message_id,
                 text=(f"✅ <b>Netflix ZIP ဖိုင် Database ထဲသို့ ဖြေပြီးပါပြီ။</b>\n\n▪️ ယခုထည့်လိုက်သော Cookie အရေအတွက်: <b>{extracted_count}</b> ခု\n▪️ စုစုပေါင်း အသင့်ရှိသော Netflix အရေအတွက်: <b>{total_pool}</b> ခု"),
                 parse_mode="HTML"
             )
             return
         except zip_lib.BadZipFile:
-            bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text="❌ ZIP ဖိုင် ပျက်နေပါသည်။")
+            bot.edit_message_text(chat_id=chat_id, message_id=progress.message_id, text="❌ ZIP ဖိုင် ပျက်နေပါသည်။")
             return
         except Exception as e:
             logger.exception("ZIP extract failed")
-            bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error ဖြစ်သွားပါသည်: {e}")
+            bot.edit_message_text(chat_id=chat_id, message_id=progress.message_id, text=f"❌ Error ဖြစ်သွားပါသည်: {e}")
             return
 
     # Direct TXT testing
-    stop_flags[str_user_id] = False
+    stop_flags[str(user_id)] = False
     file_name = message.document.file_name.lower()
 
     if not file_name.endswith('.txt'):
@@ -656,7 +683,12 @@ def process_document_merged(message: types.Message):
     def task():
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
-        run_generator_task(message.chat.id, str_user_id, downloaded_file, progress_msg.message_id)
+        url_result = execute_token_generation(downloaded_file, str(user_id), chat_id)
+        if url_result:
+            safe_url = html.escape(url_result, quote=True)
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg.message_id, text=f"🎬 ရပြီဝေ့:\n\n{safe_url}", disable_web_page_preview=True)
+        else:
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg.message_id, text="❌ Token ထုတ်ယူ၍ မရပါ (Cookie အလုပ်မလုပ်ပါ)။")
 
     Thread(target=task).start()
 
@@ -666,7 +698,11 @@ def handle_text_merged(message: types.Message):
     if message.text in ["/start 🔄", STOP_BTN, BROADCAST_CANCEL_BTN]: return
 
     chat_id = message.chat.id
-    user_id = str(chat_id)
+    user_id = message.from_user.id
+    thread_id = getattr(message, 'message_thread_id', None)
+
+    if not is_chat_allowed(chat_id, user_id, thread_id):
+        return
 
     if is_banned(user_id):
         bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
@@ -679,8 +715,8 @@ def handle_text_merged(message: types.Message):
         bot.reply_to(message, "ကျေးဇူးပြု၍ .zip ဖိုင်ကို ပို့ပေးပါ သို့မဟုတ် /cancel ကိုနှိပ်ပါ။")
         return
 
-    if chat_id == ADMIN_ID and awaiting_broadcast.get(user_id):
-        awaiting_broadcast[user_id] = False
+    if chat_id == ADMIN_ID and awaiting_broadcast.get(str(chat_id)):
+        awaiting_broadcast[str(chat_id)] = False
         broadcast_text = message.text
         sent, failed = 0, 0
         try:
@@ -696,15 +732,20 @@ def handle_text_merged(message: types.Message):
                         failed += 1
         except Exception as e:
             logger.error(f"Broadcast error fetching users: {e}")
-            
+
         bot.send_message(chat_id, f"📢 Broadcast ပို့ပြီးပါပြီ。\n✅ အောင်မြင်: {sent}\n❌ မအောင်မြင်: {failed}", reply_markup=get_main_menu())
         return
 
-    stop_flags[user_id] = False
+    stop_flags[str(user_id)] = False
     progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
 
     def task():
-        run_generator_task(chat_id, user_id, message.text.encode('utf-8'), progress_msg.message_id)
+        url_result = execute_token_generation(message.text.encode('utf-8'), str(user_id), chat_id)
+        if url_result:
+            safe_url = html.escape(url_result, quote=True)
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg.message_id, text=f"🎬 ရပြီဝေ့:\n\n{safe_url}", disable_web_page_preview=True)
+        else:
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg.message_id, text="❌ Token ထုတ်ယူ၍ မရပါ (Cookie အလုပ်မလုပ်ပါ)။")
 
     Thread(target=task).start()
 
