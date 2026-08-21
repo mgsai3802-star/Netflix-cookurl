@@ -377,7 +377,7 @@ def send_welcome_and_menu(message):
         bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
     log_user(message)
-    bot.reply_to(message, "မင်္ဂလာပါ ဝေ့ - အောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး အသင့်သုံး link‌ နဲ့ Token တွေထုတ်ကွာ", reply_markup=public_keyboard(message.from_user.id), disable_web_page_preview=True)
+    bot.reply_to(message, "မင်္ဂလာပါ ဝေ့ - Netflix Or Chatgpt Cookie ပါတဲ့ .txtဖိုင် ဖြစ်ဖြစ် textဖြစ်ဖြစ် ပို့လိုက်ကွာ ဒါမှမဟုတ် အောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး အသင့်သုံး link‌ နဲ့ Token တွေထုတ်ကွာ", reply_markup=public_keyboard(message.from_user.id), disable_web_page_preview=True)
 
 @bot.message_handler(func=lambda message: message.text == BROADCAST_CANCEL_BTN)
 def cancel_broadcast(message):
