@@ -516,15 +516,12 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     if is_netflix:
                         safe_url = html.escape(final_result, quote=True)
                         reply_text = f"🎬 ရပြီဝေ့:\n\n{safe_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"
-                   else:
-                        # သင်၏ Render 2 (ChatGPT Web) လင့်ခ်အစစ်ကို ဤနေရာတွင် ထည့်ပါ
+                    else:
                         RENDER_2_URL = "https://urlchatgyi.onrender.com" 
-                        
                         import urllib.parse
                         settings_json = f'{{"key":"{final_result}"}}'
                         encoded_settings = urllib.parse.quote(settings_json)
                         one_click_url = f"{RENDER_2_URL}/#/?settings={encoded_settings}"
-                        
                         reply_text = f"🤖 ရပြီဝေ့ (ChatGPT):\n\n🔗 <b>အောက်ပါလင့်ခ်ကို နှိပ်၍ တိုက်ရိုက်သုံးပါ:</b>\n{one_click_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်ကို တခြားသူအား ပြန်လည် မဝေမျှပါနှင့်။\n\n{quota_info}"
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=reply_text, disable_web_page_preview=True, parse_mode="HTML")
                 else:
