@@ -100,7 +100,7 @@ def load_cached_data():
         vip_res = supabase.table('vip_users').select('user_id').execute()
         for v in vip_res.data:
             vip_users.add(v['user_id'])
-        
+         
         ban_res = supabase.table('banned_users').select('user_id').execute()
         for b in ban_res.data:
             banned_users.add(b['user_id'])
@@ -517,12 +517,15 @@ def handle_callback(call: types.CallbackQuery) -> None:
                         safe_url = html.escape(final_result, quote=True)
                         reply_text = f"🎬 ရပြီဝေ့:\n\n{safe_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"
                     else:
-                        RENDER_2_URL = "https://urlchatgyi.onrender.com" 
+                        # Vercel URL ထည့်သွင်းထားသည်
+                        VERCEL_URL = "https://urlchatgyi-mts9q34mo-mgsai3802-5524s-projects.vercel.app" 
+                        
                         import urllib.parse
                         settings_json = f'{{"key":"{final_result}"}}'
                         encoded_settings = urllib.parse.quote(settings_json)
-                        one_click_url = f"{RENDER_2_URL}/#/?settings={encoded_settings}"
+                        one_click_url = f"{VERCEL_URL}/#/?settings={encoded_settings}"
                         reply_text = f"🤖 ရပြီဝေ့ (ChatGPT):\n\n🔗 <b>အောက်ပါလင့်ခ်ကို နှိပ်၍ တိုက်ရိုက်သုံးပါ:</b>\n{one_click_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်ကို တခြားသူအား ပြန်လည် မဝေမျှပါနှင့်။\n\n{quota_info}"
+                        
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=reply_text, disable_web_page_preview=True, parse_mode="HTML")
                 else:
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"လောလောဆယ် အဆင်ပြေသော {platform_name} Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။")
