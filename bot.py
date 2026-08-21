@@ -1,4 +1,4 @@
-"""Combined Telegram bot with Netflix & ChatGPT (Supabase Database)"""
+"""Telegram Netflix Cookie Bot (Supabase Database)"""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ import threading
 import html
 import logging
 import requests
-import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -29,7 +28,6 @@ from supabase import create_client, Client
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-VERCEL_URL = "https://urlchatgyi-mts9q34mo-mgsai3802-5524s-projects.vercel.app"
 
 if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
     print("Error: BOT_TOKEN, SUPABASE_URL, and SUPABASE_KEY must be set in Environment Variables.")
@@ -62,7 +60,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger("combined_bot")
+logger = logging.getLogger("netflix_bot")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True)
 app = Flask(__name__)
@@ -144,17 +142,14 @@ def increment_quota(uid: str, date_str: str) -> int:
         logger.error(f"Increment quota error: {e}")
     return new_count
 
-def get_stats() -> tuple[int, int]:
-    n_count, c_count = 0, 0
+def get_stats() -> int:
+    n_count = 0
     try:
         n_res = supabase.table('cookies').select('id', count='exact').execute()
         n_count = n_res.count if n_res.count is not None else (len(n_res.data) if n_res.data else 0)
-        
-        c_res = supabase.table('chatgpt_cookies').select('id', count='exact').execute()
-        c_count = c_res.count if c_res.count is not None else (len(c_res.data) if c_res.data else 0)
     except Exception as e:
         logger.error(f"Count cookies error: {e}")
-    return n_count, c_count
+    return n_count
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -247,32 +242,6 @@ def check_cookie_active(content_bytes: bytes) -> bool:
         logger.error(f"Netflix validation error: {e}")
         return False
 
-def get_chatgpt_token(content_bytes: bytes) -> str | None:
-    """ChatGPT Token Extraction via Requests"""
-    try:
-        text = content_bytes.decode('utf-8', errors='ignore')
-        cookies = {}
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith('#'): continue
-            parts = re.split(r'\t+', stripped)
-            if len(parts) >= 7:
-                cookies[parts[5]] = parts[6]
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Referer": "https://chatgpt.com/",
-        }
-        res = requests.get("https://chatgpt.com/api/auth/session", cookies=cookies, headers=headers, timeout=15)
-        
-        if res.status_code == 200:
-            data = res.json()
-            return data.get("accessToken")
-    except Exception as e:
-        logger.error(f"ChatGPT extraction error: {e}")
-    return None
-
 def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
     """Netflix Token Generator Execution"""
     input_path = "input.txt"
@@ -322,17 +291,11 @@ def get_broadcast_menu():
 
 def public_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton("Netflix လင့်ခ် 🎬", callback_data="claim_netflix"),
-        types.InlineKeyboardButton("ChatGPT လင့်ခ် 🤖", callback_data="claim_chatgpt")
-    )
+    keyboard.add(types.InlineKeyboardButton("Netflix လင့်ခ် 🎬", callback_data="claim_netflix"))
     keyboard.add(types.InlineKeyboardButton("ကျွန်ုပ်၏ Quota 📊", callback_data="my_quota"))
     
     if is_admin(user_id):
-        keyboard.add(
-            types.InlineKeyboardButton("Netflix ZIP တင်ရန် 📤", callback_data="upload_netflix"),
-            types.InlineKeyboardButton("ChatGPT ZIP တင်ရန် 📤", callback_data="upload_chatgpt")
-        )
+        keyboard.add(types.InlineKeyboardButton("Netflix ZIP တင်ရန် 📤", callback_data="upload_netflix"))
         keyboard.add(types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="admin_stats"))
         keyboard.add(types.InlineKeyboardButton("Admin Panel ⚙️", callback_data="admin_panel"))
     else:
@@ -349,8 +312,7 @@ def admin_panel_keyboard():
         types.InlineKeyboardButton("✅ Unban User", callback_data="panel_unban"),
         types.InlineKeyboardButton("📜 Banned List", callback_data="panel_list_banned"),
         types.InlineKeyboardButton("👥 All Users", callback_data="panel_list_users"),
-        types.InlineKeyboardButton("🗑 Clear Netflix Pool", callback_data="panel_clear_netflix"),
-        types.InlineKeyboardButton("🗑 Clear ChatGPT Pool", callback_data="panel_clear_chatgpt"),
+        types.InlineKeyboardButton("🗑 Clear Pool", callback_data="panel_clear_cookies"),
         types.InlineKeyboardButton("📢 Broadcast", callback_data="panel_broadcast"),
     )
     return kb
@@ -361,7 +323,7 @@ def admin_panel_keyboard():
 
 @app.route('/')
 def alive():
-    return "Combined Netflix & ChatGPT Bot is running online!"
+    return "Netflix Bot is running online!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -377,7 +339,7 @@ def send_welcome_and_menu(message):
         bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
     log_user(message)
-    bot.reply_to(message, "မင်္ဂလာပါ ဝေ့ - Netflix Or Chatgpt Cookie ပါတဲ့ .txtဖိုင် ဖြစ်ဖြစ် textဖြစ်ဖြစ် ပို့လိုက်ကွာ ဒါမှမဟုတ် အောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး အသင့်သုံး link‌ နဲ့ Token တွေထုတ်ကွာ", reply_markup=public_keyboard(message.from_user.id), disable_web_page_preview=True)
+    bot.reply_to(message, "မင်္ဂလာပါ ဝေ့ - Netflix Cookie ပါတဲ့ .txt ဖိုင်ဖြစ်ဖြစ် text ဖြစ်ဖြစ် ပို့လိုက်ပါ သို့မဟုတ် အောက်က ခလုတ်ကိုနှိပ်ပြီး အသင့်သုံး Netflix လင့်ခ် ထုတ်ယူပါ", reply_markup=public_keyboard(message.from_user.id), disable_web_page_preview=True)
 
 @bot.message_handler(func=lambda message: message.text == BROADCAST_CANCEL_BTN)
 def cancel_broadcast(message):
@@ -450,7 +412,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
         bot.send_message(chat_id, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
 
-    # User Actions
     if call.data == "my_quota":
         if is_admin(user_id) or is_vip(user_id):
             bot.send_message(chat_id, "👑 သင်ဟာ Admin/VIP ဖြစ်တဲ့အတွက် Quota အကန့်အသတ်မရှိ (Unlimited) သုံးနိုင်ပါတယ်။")
@@ -461,12 +422,8 @@ def handle_callback(call: types.CallbackQuery) -> None:
             bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{limit_val}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
         return
 
-    # CLAIM NETFLIX OR CHATGPT
-    elif call.data in ["claim_netflix", "claim_chatgpt"]:
-        is_netflix = (call.data == "claim_netflix")
-        platform_name = "Netflix" if is_netflix else "ChatGPT"
-        table_name = 'cookies' if is_netflix else 'chatgpt_cookies'
-
+    # CLAIM NETFLIX
+    elif call.data == "claim_netflix":
         limit_val = get_daily_limit()
         user_limit = 999999 if (is_admin(user_id) or is_vip(user_id)) else limit_val
         used = get_quota(str(user_id), current_date())
@@ -481,57 +438,36 @@ def handle_callback(call: types.CallbackQuery) -> None:
                 bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး")
                 return
 
-            wait_msg = bot.send_message(chat_id, f"⏳ {platform_name} Cookie ကို စစ်ဆေးပြီး ထုတ်နေပါပြီ ခဏစောင့်ကွာ...")
+            wait_msg = bot.send_message(chat_id, "⏳ Netflix Cookie ကို စစ်ဆေးပြီး လင့်ခ်ထုတ်နေပါပြီ ခဏစောင့်ကွာ...")
             try:
                 final_result = None
                 
-                # Safe batch loop to test cookies without instantly wiping out the entire database pool
-                res = supabase.table(table_name).select('id, content').limit(5).execute()
-                if not res.data:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"လောလောဆယ် အဆင်ပြေသော {platform_name} Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။")
-                    return
+                while True:
+                    res = supabase.table('cookies').select('id, content').limit(1).execute()
+                    if not res.data:
+                        break
 
-                for row in res.data:
-                    cookie_id = row['id']
-                    content_text = row['content']
+                    cookie_id = res.data[0]['id']
+                    content_text = res.data[0]['content']
                     content_bytes = content_text.encode('utf-8')
 
-                    if is_netflix:
-                        if check_cookie_active(content_bytes):
-                            url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
-                            if url_result:
-                                supabase.table(table_name).delete().eq('id', cookie_id).execute()
-                                final_result = url_result
-                                break
-                            else:
-                                supabase.table(table_name).delete().eq('id', cookie_id).execute()
-                        else:
-                            supabase.table(table_name).delete().eq('id', cookie_id).execute()
-                    else:
-                        token_result = get_chatgpt_token(content_bytes)
-                        if token_result:
-                            supabase.table(table_name).delete().eq('id', cookie_id).execute()
-                            final_result = token_result
-                            break
-                        else:
-                            supabase.table(table_name).delete().eq('id', cookie_id).execute()
+                    supabase.table('cookies').delete().eq('id', cookie_id).execute()
+
+                    if not check_cookie_active(content_bytes): continue
+                    url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
+                    if url_result:
+                        final_result = url_result
+                        break
 
                 if final_result:
                     new_used = increment_quota(str(user_id), current_date())
                     quota_info = "👑 <b>VIP/Admin Account (Unlimited)</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ — <b>{max(0, limit_val - new_used)}</b> ခု ကျန်သေးတယ်ကွာ"
 
-                    if is_netflix:
-                        safe_url = html.escape(final_result, quote=True)
-                        reply_text = f"🎬 ရပြီဝေ့:\n\n{safe_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"
-                    else:
-                        settings_json = f'{{"key":"{final_result}"}}'
-                        encoded_settings = urllib.parse.quote(settings_json)
-                        one_click_url = f"{VERCEL_URL}/#/?settings={encoded_settings}"
-                        reply_text = f"🤖 ရပြီဝေ့ (ChatGPT):\n\n🔗 <b>အောက်ပါလင့်ခ်ကို နှိပ်၍ တိုက်ရိုက်သုံးပါ:</b>\n{one_click_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်ကို တခြားသူအား ပြန်လည် မဝေမျှပါနှင့်။\n\n{quota_info}"
-                        
+                    safe_url = html.escape(final_result, quote=True)
+                    reply_text = f"🎬 ရပြီဝေ့:\n\n{safe_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=reply_text, disable_web_page_preview=True, parse_mode="HTML")
                 else:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"လောလောဆယ် အဆင်ပြေသော {platform_name} Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။")
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="လောလောဆယ် အဆင်ပြေသော Netflix Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။")
             except Exception as e:
                 bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error တက်ကုန်ပြီဟ: {e}")
             finally:
@@ -546,13 +482,10 @@ def handle_callback(call: types.CallbackQuery) -> None:
     if call.data == "upload_netflix":
         with _pending_lock: _pending_upload_admins[user_id] = "netflix"
         bot.send_message(chat_id, "🎬 <b>Netflix အတွက် .zip ဖိုင်ကို ပို့ပေးပါ။</b>\n(Zip ထဲတွင် Cookie <code>.txt</code> များ ပါဝင်ရပါမည်)", parse_mode="HTML")
-    elif call.data == "upload_chatgpt":
-        with _pending_lock: _pending_upload_admins[user_id] = "chatgpt"
-        bot.send_message(chat_id, "🤖 <b>ChatGPT အတွက် .zip ဖိုင်ကို ပို့ပေးပါ။</b>\n(Zip ထဲတွင် Cookie <code>.txt</code> များ ပါဝင်ရပါမည်)", parse_mode="HTML")
         
     elif call.data == "admin_stats":
-        n_count, c_count = get_stats()
-        bot.send_message(chat_id, f"📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\n🎬 Netflix Cookie: <b>{n_count}</b> ခု\n🤖 ChatGPT Cookie: <b>{c_count}</b> ခု", parse_mode="HTML")
+        n_count = get_stats()
+        bot.send_message(chat_id, f"📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\n🎬 Netflix Cookie: <b>{n_count}</b> ခု", parse_mode="HTML")
 
     elif call.data == "admin_panel":
         bot.send_message(chat_id, "⚙️ <b>Admin Management Panel</b>\nအောက်ပါ လုပ်ဆောင်ချက်များကို ရွေးချယ်ပါ:", reply_markup=admin_panel_keyboard(), parse_mode="HTML")
@@ -626,15 +559,13 @@ def handle_callback(call: types.CallbackQuery) -> None:
         except Exception as e:
             bot.send_message(chat_id, f"Users ဖတ်ရာတွင် Error တက်ပါသည်: {e}")
 
-    elif call.data in ["panel_clear_netflix", "panel_clear_chatgpt"]:
-        table_name = 'cookies' if call.data == "panel_clear_netflix" else 'chatgpt_cookies'
-        platform = "Netflix" if call.data == "panel_clear_netflix" else "ChatGPT"
+    elif call.data == "panel_clear_cookies":
         try:
-            res = supabase.table(table_name).select('id', count='exact').execute()
+            res = supabase.table('cookies').select('id', count='exact').execute()
             total = res.count if res.count is not None else 0
             if total > 0:
-                supabase.table(table_name).delete().gt('id', -1).execute()
-            bot.send_message(chat_id, f"🗑 <b>{platform} Cookie အဟောင်းများ ရှင်းလင်းခြင်း ပြီးစီးပါပြီ။</b>\n\nဖျက်လိုက်သော ဖိုင်အရေအတွက်: <b>{total}</b> ခု", parse_mode="HTML")
+                supabase.table('cookies').delete().gt('id', -1).execute()
+            bot.send_message(chat_id, f"🗑 <b>Netflix Cookie အဟောင်းများ ရှင်းလင်းခြင်း ပြီးစီးပါပြီ။</b>\n\nဖျက်လိုက်သော ဖိုင်အရေအတွက်: <b>{total}</b> ခု", parse_mode="HTML")
         except Exception as e:
             bot.send_message(chat_id, f"Error: {e}")
 
@@ -663,7 +594,7 @@ def process_document_merged(message: types.Message):
         upload_type = _pending_upload_admins.get(user_id)
 
     # ADMIN ZIP UPLOAD
-    if upload_type and is_admin(user_id):
+    if upload_type == "netflix" and is_admin(user_id):
         document = message.document
         filename = document.file_name or "cookies.zip"
         
@@ -674,10 +605,7 @@ def process_document_merged(message: types.Message):
             bot.reply_to(message, f"❌ ဖိုင်ဆိုဒ် ကြီးလွန်းနေပါသည်။ အများဆုံး {MAX_UPLOAD_BYTES // (1024*1024)} MB သာ လက်ခံပါသည်။")
             return
 
-        table_name = 'cookies' if upload_type == "netflix" else 'chatgpt_cookies'
-        platform = "Netflix" if upload_type == "netflix" else "ChatGPT"
-
-        progress = bot.reply_to(message, f"📦 {platform} ZIP ဖိုင်ကို Database ထဲသို့ သွင်းနေပါသည်...")
+        progress = bot.reply_to(message, "📦 Netflix ZIP ဖိုင်ကို Database ထဲသို့ သွင်းနေပါသည်...")
 
         try:
             file_info = bot.get_file(document.file_id)
@@ -695,16 +623,15 @@ def process_document_merged(message: types.Message):
             chunk_size = 500
             for i in range(0, extracted_count, chunk_size):
                 chunk = cookies_to_insert[i:i + chunk_size]
-                supabase.table(table_name).insert(chunk).execute()
+                supabase.table('cookies').insert(chunk).execute()
 
             with _pending_lock: _pending_upload_admins.pop(user_id, None)
 
-            n_count, c_count = get_stats()
-            total_pool = n_count if upload_type == "netflix" else c_count
+            total_pool = get_stats()
 
             bot.edit_message_text(
                 chat_id=user_id, message_id=progress.message_id,
-                text=(f"✅ <b>{platform} ZIP ဖိုင် Database ထဲသို့ ဖြေပြီးပါပြီ။</b>\n\n▪️ ယခုထည့်လိုက်သော Cookie အရေအတွက်: <b>{extracted_count}</b> ခု\n▪️ စုစုပေါင်း အသင့်ရှိသော {platform} အရေအတွက်: <b>{total_pool}</b> ခု"),
+                text=(f"✅ <b>Netflix ZIP ဖိုင် Database ထဲသို့ ဖြေပြီးပါပြီ။</b>\n\n▪️ ယခုထည့်လိုက်သော Cookie အရေအတွက်: <b>{extracted_count}</b> ခု\n▪️ စုစုပေါင်း အသင့်ရှိသော Netflix အရေအတွက်: <b>{total_pool}</b> ခု"),
                 parse_mode="HTML"
             )
             return
@@ -716,7 +643,7 @@ def process_document_merged(message: types.Message):
             bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error ဖြစ်သွားပါသည်: {e}")
             return
 
-    # Direct TXT testing (Default to Netflix logic for backward compatibility)
+    # Direct TXT testing
     stop_flags[str_user_id] = False
     file_name = message.document.file_name.lower()
 
@@ -773,7 +700,6 @@ def handle_text_merged(message: types.Message):
         bot.send_message(chat_id, f"📢 Broadcast ပို့ပြီးပါပြီ。\n✅ အောင်မြင်: {sent}\n❌ မအောင်မြင်: {failed}", reply_markup=get_main_menu())
         return
 
-    # Direct text generating (Defaults to Netflix)
     stop_flags[user_id] = False
     progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
 
@@ -789,5 +715,5 @@ def handle_text_merged(message: types.Message):
 if __name__ == "__main__":
     load_cached_data()
     Thread(target=run_web, daemon=True).start()
-    logger.info("Combined Bot Started (Netflix & ChatGPT with Supabase)...")
+    logger.info("Netflix Bot Started with Supabase...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
