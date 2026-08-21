@@ -14,6 +14,7 @@ import threading
 import html
 import logging
 import requests
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -71,7 +72,6 @@ file_lock = threading.Lock()
 running_process = {}
 stop_flags = {}
 awaiting_broadcast = {}
-# Use dict to know which type of zip is being uploaded: "netflix" or "chatgpt"
 _pending_upload_admins: dict[int, str] = {} 
 _pending_lock = threading.Lock()
 
@@ -145,7 +145,6 @@ def increment_quota(uid: str, date_str: str) -> int:
     return new_count
 
 def get_stats() -> tuple[int, int]:
-    """Returns (netflix_count, chatgpt_count)"""
     n_count, c_count = 0, 0
     try:
         n_res = supabase.table('cookies').select('id', count='exact').execute()
@@ -249,26 +248,29 @@ def check_cookie_active(content_bytes: bytes) -> bool:
         return False
 
 def get_chatgpt_token(content_bytes: bytes) -> str | None:
-    """ChatGPT Token Local Extraction (Cloudflare Bypass)"""
+    """ChatGPT Token Extraction via Requests"""
     try:
         text = content_bytes.decode('utf-8', errors='ignore')
-        # Look for __Secure-next-auth.session-token or sessionToken
-        m = re.search(r'(__Secure-next-auth\.session-token|sessionToken|access_token)=([^\s;]+)', text)
-        if m:
-            return m.group(2)
-        
-        # Netscape tab-separated format check
+        cookies = {}
         for line in text.splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('#'): continue
             parts = re.split(r'\t+', stripped)
             if len(parts) >= 7:
-                name = parts[5]
-                value = parts[6]
-                if name in ["__Secure-next-auth.session-token", "sessionToken", "access_token"]:
-                    return value
+                cookies[parts[5]] = parts[6]
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Referer": "https://chatgpt.com/",
+        }
+        res = requests.get("https://chatgpt.com/api/auth/session", cookies=cookies, headers=headers, timeout=15)
+        
+        if res.status_code == 200:
+            data = res.json()
+            return data.get("accessToken")
     except Exception as e:
-        logger.error(f"ChatGPT local extraction error: {e}")
+        logger.error(f"ChatGPT extraction error: {e}")
     return None
 
 def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
@@ -483,34 +485,36 @@ def handle_callback(call: types.CallbackQuery) -> None:
             try:
                 final_result = None
                 
-                while True:
-                    res = supabase.table(table_name).select('id, content').limit(1).execute()
-                    if not res.data:
-                        break # Pool is empty
+                # Safe batch loop to test cookies without instantly wiping out the entire database pool
+                res = supabase.table(table_name).select('id, content').limit(5).execute()
+                if not res.data:
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"လောလောဆယ် အဆင်ပြေသော {platform_name} Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။")
+                    return
 
-                    cookie_id = res.data[0]['id']
-                    content_text = res.data[0]['content']
+                for row in res.data:
+                    cookie_id = row['id']
+                    content_text = row['content']
                     content_bytes = content_text.encode('utf-8')
 
                     if is_netflix:
-                        # For Netflix, delete then check
-                        supabase.table(table_name).delete().eq('id', cookie_id).execute()
-                        if not check_cookie_active(content_bytes): continue
-                        url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
-                        if url_result:
-                            final_result = url_result
-                            break
+                        if check_cookie_active(content_bytes):
+                            url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
+                            if url_result:
+                                supabase.table(table_name).delete().eq('id', cookie_id).execute()
+                                final_result = url_result
+                                break
+                            else:
+                                supabase.table(table_name).delete().eq('id', cookie_id).execute()
+                        else:
+                            supabase.table(table_name).delete().eq('id', cookie_id).execute()
                     else:
                         token_result = get_chatgpt_token(content_bytes)
                         if token_result:
-                            # Delete only on success so we don't wipe out everything!
                             supabase.table(table_name).delete().eq('id', cookie_id).execute()
                             final_result = token_result
                             break
                         else:
-                            # If invalid, remove it so it doesn't loop forever on bad cookie
                             supabase.table(table_name).delete().eq('id', cookie_id).execute()
-                            continue
 
                 if final_result:
                     new_used = increment_quota(str(user_id), current_date())
@@ -520,7 +524,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
                         safe_url = html.escape(final_result, quote=True)
                         reply_text = f"🎬 ရပြီဝေ့:\n\n{safe_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"
                     else:
-                        import urllib.parse
                         settings_json = f'{{"key":"{final_result}"}}'
                         encoded_settings = urllib.parse.quote(settings_json)
                         one_click_url = f"{VERCEL_URL}/#/?settings={encoded_settings}"
