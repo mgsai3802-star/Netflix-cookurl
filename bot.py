@@ -547,8 +547,8 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     new_used = increment_quota(str(user_id), current_date())
                     quota_info = "👑 <b>VIP/Admin Account</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ"
                     
-                    web_app_link = f"https://app.plex.tv/desktop?X-Plex-Token={final_token}"
-                    reply_text = f"🍿 <b>Plex အကောင့် ရပါပြီ:</b>\n\n🔗 <a href='{web_app_link}'>Plex ဝင်ရန် နှိပ်ပါ</a>\n\n{quota_info}"
+                    link = f"https://app.plex.tv/desktop?X-Plex-Token={final_token}"
+                    reply_text = f"🍿 <b>Plex အကောင့် ရပါပြီ:</b>\n\n{link}\n\n{quota_info}"
                     
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=reply_text, disable_web_page_preview=True, parse_mode="HTML")
                 else:
@@ -649,7 +649,7 @@ def process_txt_direct(chat_id, user_id, content_bytes, progress_msg_id=None):
         plex_token = extract_plex_token(content_bytes)
         if plex_token and check_plex_token_alive(plex_token):
             link = f"https://app.plex.tv/desktop?X-Plex-Token={plex_token}"
-            text = f"🍿 <b>Plex အကောင့်ရပါပြီ:</b>\n\n🔗 <a href='{link}'>Plex ဝင်ရန် နှိပ်ပါ</a>"
+            text = f"🍿 <b>Plex အကောင့်ရပါပြီ:</b>\n\n{link}"
             if progress_msg_id: bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text=text, disable_web_page_preview=True)
             else: bot.send_message(chat_id, text, disable_web_page_preview=True, reply_markup=get_main_menu())
             return
@@ -800,5 +800,5 @@ def handle_text_merged(message: types.Message):
 if __name__ == "__main__":
     load_cached_data()
     Thread(target=run_web, daemon=True).start()
-    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Netflix + Plex Integrated)...")
+    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Netflix + Plex Integrated, Direct URLs)...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
