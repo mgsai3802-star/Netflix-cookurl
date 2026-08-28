@@ -30,6 +30,9 @@ BOT_TOKEN = os.environ.get('BOT_TOKEN')
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
+# သင်ပေးပို့လာသော Vercel Web App လင့်ခ်အမှန်
+PLEX_WEB_URL = "https://plex-auto-login.vercel.app"
+
 if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
     print("Error: BOT_TOKEN, SUPABASE_URL, and SUPABASE_KEY must be set in Environment Variables.")
     exit(1)
@@ -547,10 +550,10 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     new_used = increment_quota(str(user_id), current_date())
                     quota_info = "👑 <b>VIP/Admin Account</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ"
                     
-                    link = f"https://app.plex.tv/desktop?X-Plex-Token={final_token}"
+                    link = f"{PLEX_WEB_URL}/?token={final_token}"
                     reply_text = f"🍿 <b>Plex အကောင့် ရပါပြီ:</b>\n\n{link}\n\n{quota_info}"
                     
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=reply_text, disable_web_page_preview=True, parse_mode="HTML")
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=reply_text, disable_web_page_preview=True)
                 else:
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="လောလောဆယ် အဆင်ပြေသော Plex Token များ ကုန်နေပါသည်ကွာ။")
             except Exception as e:
@@ -648,7 +651,7 @@ def process_txt_direct(chat_id, user_id, content_bytes, progress_msg_id=None):
         # 1. Try Plex First
         plex_token = extract_plex_token(content_bytes)
         if plex_token and check_plex_token_alive(plex_token):
-            link = f"https://app.plex.tv/desktop?X-Plex-Token={plex_token}"
+            link = f"{PLEX_WEB_URL}/?token={plex_token}"
             text = f"🍿 <b>Plex အကောင့်ရပါပြီ:</b>\n\n{link}"
             if progress_msg_id: bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text=text, disable_web_page_preview=True)
             else: bot.send_message(chat_id, text, disable_web_page_preview=True, reply_markup=get_main_menu())
@@ -800,5 +803,5 @@ def handle_text_merged(message: types.Message):
 if __name__ == "__main__":
     load_cached_data()
     Thread(target=run_web, daemon=True).start()
-    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Netflix + Plex Integrated, Direct URLs)...")
+    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Netflix + Plex Integrated with Vercel Link)...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
