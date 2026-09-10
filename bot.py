@@ -257,7 +257,8 @@ def get_broadcast_menu():
 
 def public_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    keyboard.add(types.InlineKeyboardButton("Link ရယူရန် 🔗", callback_data="claim_link"))
+    # ခလုတ်နာမည်ကို ပြောင်းလဲပေးထားပါသည်
+    keyboard.add(types.InlineKeyboardButton("Netflix login link ယူရန်", callback_data="claim_link"))
     keyboard.add(types.InlineKeyboardButton("ကျွန်ုပ်၏ Quota 📊", callback_data="my_quota"))
     keyboard.add(types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="show_stats"))
     
@@ -280,6 +281,18 @@ def admin_panel_keyboard():
         types.InlineKeyboardButton("👥 All Users", callback_data="panel_list_users"),
         types.InlineKeyboardButton("🗑 Clear Cookie Pool", callback_data="panel_clear"),
         types.InlineKeyboardButton("📢 Broadcast", callback_data="panel_broadcast"),
+    )
+    return kb
+
+def get_login_links_keyboard(url: str) -> types.InlineKeyboardMarkup:
+    """Helper function to create the 3 login buttons as requested"""
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        types.InlineKeyboardButton("💻 PC Login", url=url),
+        types.InlineKeyboardButton("📱 Mobile Login", url=url)
+    )
+    kb.add(
+        types.InlineKeyboardButton("📺 TV Login", url=url)
     )
     return kb
 
@@ -475,13 +488,14 @@ def handle_callback(call: types.CallbackQuery) -> None:
 
                 if clean_url:
                     new_used = increment_quota(str(user_id), current_date())
-                    safe_url = html.escape(clean_url, quote=True)
                     quota_info = "👑 <b>VIP/Admin Account (Unlimited)</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ — <b>{max(0, limit_val - new_used)}</b> ခု ကျန်သေးတယ်ကွာ"
 
+                    # ဒီနေရာမှာ Link ကို Text အနေနဲ့မပြဘဲ Inline Keyboard အနေနဲ့ ပြောင်းလဲပေးထားပါသည်
                     bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=wait_msg.message_id,
-                        text=(f"ရပြီဝေ့:\n\n{safe_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"),
+                        text=(f"ရပြီဝေ့:\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"),
+                        reply_markup=get_login_links_keyboard(clean_url),
                         disable_web_page_preview=True
                     )
                 else:
@@ -576,7 +590,12 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
 
         clean_url = execute_token_generation(content_bytes, user_id, chat_id)
         if clean_url:
-            bot.send_message(chat_id, f"ရပြီဝေ့:\n\n{clean_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်", reply_markup=get_main_menu())
+            # ဒီနေရာမှာလည်း Link ကို Text အနေနဲ့မပြဘဲ Inline Keyboard အနေနဲ့ ပြောင်းလဲပေးထားပါသည်
+            bot.send_message(
+                chat_id,
+                "ရပြီဝေ့:\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်",
+                reply_markup=get_login_links_keyboard(clean_url)
+            )
         else:
             bot.send_message(chat_id, "Token မတွေ့ဘူး (သို့မဟုတ် အကောင့်ပျက်နေသည်) နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
             bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id})")
