@@ -257,7 +257,6 @@ def get_broadcast_menu():
 
 def public_keyboard(user_id: int) -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=1)
-    # ခလုတ်နာမည်ကို ပြောင်းလဲပေးထားပါသည်
     keyboard.add(types.InlineKeyboardButton("Netflix login link ယူရန်", callback_data="claim_link"))
     keyboard.add(types.InlineKeyboardButton("ကျွန်ုပ်၏ Quota 📊", callback_data="my_quota"))
     keyboard.add(types.InlineKeyboardButton("လက်ကျန်စာရင်း 📋", callback_data="show_stats"))
@@ -285,14 +284,23 @@ def admin_panel_keyboard():
     return kb
 
 def get_login_links_keyboard(url: str) -> types.InlineKeyboardMarkup:
-    """Helper function to create the 3 login buttons as requested"""
+    """Helper function to create the 3 login buttons with exact paths based on nftoken"""
+    # nftoken ကို ဆွဲထုတ်ပါမည်
+    token_match = re.search(r'nftoken=([^\s&]+)', url)
+    token = token_match.group(1) if token_match else ""
+
+    # ပုံစံ ၃ မျိုးအတွက် Link များ ဖန်တီးပါမည်
+    pc_url = f"https://www.netflix.com/YourAccount?nftoken={token}"
+    mobile_url = f"https://www.netflix.com/unsupported?nftoken={token}"
+    tv_url = f"https://www.netflix.com/tv9?nftoken={token}"
+
     kb = types.InlineKeyboardMarkup(row_width=2)
     kb.add(
-        types.InlineKeyboardButton("💻 PC Login", url=url),
-        types.InlineKeyboardButton("📱 Mobile Login", url=url)
+        types.InlineKeyboardButton("💻 PC Login", url=pc_url),
+        types.InlineKeyboardButton("📱 Mobile Login", url=mobile_url)
     )
     kb.add(
-        types.InlineKeyboardButton("📺 TV Login", url=url)
+        types.InlineKeyboardButton("📺 TV Login", url=tv_url)
     )
     return kb
 
@@ -490,7 +498,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     new_used = increment_quota(str(user_id), current_date())
                     quota_info = "👑 <b>VIP/Admin Account (Unlimited)</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ — <b>{max(0, limit_val - new_used)}</b> ခု ကျန်သေးတယ်ကွာ"
 
-                    # ဒီနေရာမှာ Link ကို Text အနေနဲ့မပြဘဲ Inline Keyboard အနေနဲ့ ပြောင်းလဲပေးထားပါသည်
                     bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=wait_msg.message_id,
@@ -590,7 +597,6 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
 
         clean_url = execute_token_generation(content_bytes, user_id, chat_id)
         if clean_url:
-            # ဒီနေရာမှာလည်း Link ကို Text အနေနဲ့မပြဘဲ Inline Keyboard အနေနဲ့ ပြောင်းလဲပေးထားပါသည်
             bot.send_message(
                 chat_id,
                 "ရပြီဝေ့:\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်",
