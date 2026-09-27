@@ -501,112 +501,13 @@ def handle_callback(call: types.CallbackQuery) -> None:
                     bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=wait_msg.message_id,
-                        text=(f"ရပြီဝေ့:\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"),
-                        reply_markup=get_login_links_keyboard(clean_url),
+                        text=(f"ရပြီဝေ့:\n\n{clean_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"),
                         disable_web_page_preview=True
                     )
                 else:
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="လောလောဆယ် အဆင်ပြေသော Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။")
             except Exception as e:
-                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error တက်ကုန်ပြီဟ: {e}")
-            finally:
-                file_lock.release()
-
-        Thread(target=process_claim_task).start()
-        return
-
-    # Admin Panel Actions
-    if not is_admin(user_id): return
-
-    if call.data == "admin_upload":
-        with _pending_lock: _pending_upload_admins.add(user_id)
-        bot.send_message(chat_id, "📦 <b>.zip ဖိုင်တစ်ခုကို ပို့ပေးပါ။</b>\n(Zip ထဲတွင် Netflix Cookie <code>.txt</code> ဖိုင်များ ပါဝင်ရပါမည်)\nမတင်လိုပါက /cancel ကို နှိပ်ပါ။", parse_mode="HTML")
-
-    elif call.data == "admin_panel":
-        bot.send_message(chat_id, "⚙️ <b>Admin Management Panel</b>\nအောက်ပါ လုပ်ဆောင်ချက်များကို ရွေးချယ်ပါ:", reply_markup=admin_panel_keyboard(), parse_mode="HTML")
-
-    elif call.data == "panel_add_vip":
-        msg = bot.send_message(chat_id, "🌟 VIP သတ်မှတ်ပေးမည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_add_vip)
-
-    elif call.data == "panel_rm_vip":
-        msg = bot.send_message(chat_id, "❌ VIP စာရင်းမှ ဖယ်ရှားမည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_rm_vip)
-
-    elif call.data == "panel_list_vip":
-        if not vip_users: bot.send_message(chat_id, "🌟 VIP User မရှိသေးပါ။")
-        else: bot.send_message(chat_id, f"🌟 <b>VIP User များ ({len(vip_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in vip_users]), parse_mode="HTML")
-
-    elif call.data == "panel_ban":
-        msg = bot.send_message(chat_id, "🚫 Block ပြုလုပ်မည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_ban)
-
-    elif call.data == "panel_unban":
-        msg = bot.send_message(chat_id, "✅ Unblock ပြုလုပ်မည့် <b>User ID</b> ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
-        bot.register_next_step_handler(msg, process_unban)
-
-    elif call.data == "panel_list_banned":
-        if not banned_users: bot.send_message(chat_id, "🚫 Block ထားသော User မရှိသေးပါ။")
-        else: bot.send_message(chat_id, f"🚫 <b>Block ထားသော User များ ({len(banned_users)} ဦး):</b>\n\n" + "\n".join([f"▪️ <code>{u}</code>" for u in banned_users]), parse_mode="HTML")
-
-    elif call.data == "panel_list_users":
-        if not active_users: bot.send_message(chat_id, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
-        else:
-            text = f"👥 <b>စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး</b>\n\n"
-            for uid, uname in active_users.items():
-                status = ""
-                if uid in banned_users: status = " (🚫 Blocked)"
-                elif uid in vip_users: status = " (🌟 VIP)"
-                text += f"▪️ {uname} (ID: <code>{uid}</code>){status}\n"
-            bot.send_message(chat_id, text, parse_mode="HTML")
-
-    elif call.data == "panel_clear":
-        try:
-            res = supabase.table('cookies').select('id', count='exact').execute()
-            total = res.count if res.count else 0
-            if total > 0:
-                supabase.table('cookies').delete().gt('id', -1).execute()
-            bot.send_message(chat_id, f"🗑 <b>Cookie အဟောင်းများ ရှင်းလင်းခြင်း ပြီးစီးပါပြီ။</b>\n\nဖျက်လိုက်သော ဖိုင်အရေအတွက်: <b>{total}</b> ခု", parse_mode="HTML")
-        except Exception as e:
-            bot.send_message(chat_id, f"Error: {e}")
-
-    elif call.data == "panel_broadcast":
-        awaiting_broadcast[str(chat_id)] = True
-        bot.send_message(chat_id, "📢 Broadcast ပို့ချင်တဲ့ စာသားကို ရိုက်ပို့ပါ။\nမလုပ်တော့ဘူးဆိုရင် အောက်က ခလုတ်ကို နှိပ်ပါ။", reply_markup=get_broadcast_menu())
-
-
-# ==========================================
-# FILE & MESSAGE HANDLERS
-# ==========================================
-
-def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
-    acquired = file_lock.acquire(timeout=90)
-    if not acquired:
-        bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu())
-        return
-
-    try:
-        if progress_msg_id: bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Cookie ကို စစ်ဆေးနေပါတယ်...")
-
-        if not check_cookie_active(content_bytes):
-            bot.send_message(chat_id, "❌ ပို့လိုက်တဲ့ Cookie က သက်တမ်းကုန် (သို့) Sign up ပြန်တောင်းနေပါတယ်။ တခြားတစ်ခု စမ်းကြည့်ပါ။", reply_markup=get_main_menu())
-            if progress_msg_id: bot.delete_message(chat_id=chat_id, message_id=progress_msg_id)
-            return
-
-        if progress_msg_id: bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ။")
-
-        clean_url = execute_token_generation(content_bytes, user_id, chat_id)
-        if clean_url:
-            bot.send_message(
-                chat_id,
-                "ရပြီဝေ့:\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်",
-                reply_markup=get_login_links_keyboard(clean_url)
-            )
-        else:
-            bot.send_message(chat_id, "Token မတွေ့ဘူး (သို့မဟုတ် အကောင့်ပျက်နေသည်) နောက်တစ်ခုစမ်း", reply_markup=get_main_menu())
-            bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id})")
-    except Exception as e:
-        bot.send_message(chat_id, f"Error တက်ကုန်ပြီဟ: {e}", reply_markup=get_main_menu())
+                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error တက်ကုန်ပြီဟ: {e}", reply_markup=get_main_menu())
     finally:
         file_lock.release()
 
