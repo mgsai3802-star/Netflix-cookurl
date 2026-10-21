@@ -211,7 +211,6 @@ def send_log_to_channel(user, status_text: str):
             f"🆔 <code>{masked_id}</code>\n"
             f"🎉 Status : {status_text}\n"
             f"⏱️ Time : {time_now}\n\n"
-            f"👉 ဝင်ရောက်ရန်: https://t.me/{bot_username}"
         )
         
         markup = types.InlineKeyboardMarkup()
