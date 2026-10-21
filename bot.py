@@ -199,12 +199,16 @@ def send_log_to_channel(user, status_text: str):
         bot_username = bot_info.username
         time_now = datetime.now(TIMEZONE).strftime("%I:%M %p (%d %b %Y)")
         
+        # User ID ကို လုံခြုံအောင် ဖျောက်ခြင်း (Masking)
+        uid_str = str(user.id)
+        masked_id = uid_str[:3] + "****" + uid_str[-2:] if len(uid_str) > 5 else uid_str
+        
         log_text = (
             f"🎬 <b>NETFLIX PRO UPDATE</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🤖 Bot : @{bot_username}\n"
             f"👤 User : {user.first_name}\n"
-            f"🆔 <code>{user.id}</code>\n"
+            f"🆔 <code>{masked_id}</code>\n"
             f"🎉 Status : {status_text}\n"
             f"⏱️ Time : {time_now}\n\n"
             f"👉 ဝင်ရောက်ရန်: https://t.me/{bot_username}"
@@ -212,6 +216,10 @@ def send_log_to_channel(user, status_text: str):
         
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("🚀 Open Bot Now", url=f"https://t.me/{bot_username}"))
+        
+        bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="HTML", reply_markup=markup)
+    except Exception as e:
+        logger.error(f"Log Error: {e}")
         
         bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="HTML", reply_markup=markup)
     except Exception as e:
