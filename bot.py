@@ -36,7 +36,7 @@ if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # 📡 Channel Settings (Log ပြရန် နှင့် မဖြစ်မနေ Join ခိုင်းရန်)
-FORCE_JOIN_CHANNEL = "@alight_motionpremiumlogs"
+FORCE_JOIN_CHANNEL = "@premiumlogsren"
 LOG_CHANNEL_ID = "-1003483107033"
 
 # Specific Admin ID
