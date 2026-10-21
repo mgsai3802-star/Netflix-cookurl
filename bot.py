@@ -204,9 +204,9 @@ def send_log_to_channel(user, status_text: str):
         masked_id = uid_str[:3] + "****" + uid_str[-2:] if len(uid_str) > 5 else uid_str
         
         log_text = (
-            f"🎬 <b>NETFLIX PRO UPDATE</b>\n"
+            f"🎬 <b>NETFLIX Premium UPDATE</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🤖 Bot : @{bot_username}\n"
+            f"🤖 Service : Netflix Premium\n"
             f"👤 User : {user.first_name}\n"
             f"🆔 <code>{masked_id}</code>\n"
             f"🎉 Status : {status_text}\n"
