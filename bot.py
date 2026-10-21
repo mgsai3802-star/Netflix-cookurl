@@ -35,6 +35,10 @@ if not BOT_TOKEN or not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# 📡 Channel Settings (Log ပြရန် နှင့် မဖြစ်မနေ Join ခိုင်းရန်)
+FORCE_JOIN_CHANNEL = "@alight_motionpremiumlogs"
+LOG_CHANNEL_ID = "-1003483107033"
+
 # Specific Admin ID
 ADMIN_ID = 1847021130
 ADMIN_IDS = {ADMIN_ID}
@@ -102,17 +106,14 @@ COOKIE_LINE_RE = re.compile(
 def load_cached_data():
     """Load Users, VIPs, and Banned lists from Supabase on startup"""
     try:
-        # Load all registered users
         users_res = supabase.table('users').select('user_id, username').execute()
         for u in users_res.data:
             active_users[u['user_id']] = u.get('username') or 'Unknown'
 
-        # Load VIPs
         vip_res = supabase.table('vip_users').select('user_id').execute()
         for v in vip_res.data:
             vip_users.add(v['user_id'])
         
-        # Load Banned
         ban_res = supabase.table('banned_users').select('user_id').execute()
         for b in ban_res.data:
             banned_users.add(b['user_id'])
@@ -122,11 +123,9 @@ def load_cached_data():
         logger.error(f"Error loading cached data: {e}")
 
 def get_daily_limit() -> int:
-    """Fetch daily limit dynamically from Supabase bot_settings table"""
     try:
         res = supabase.table('bot_settings').select('value').eq('key', 'daily_limit').execute()
-        if res.data:
-            return int(res.data[0]['value'])
+        if res.data: return int(res.data[0]['value'])
     except Exception as e:
         logger.error(f"Get daily limit error: {e}")
     return DEFAULT_DAILY_LIMIT
@@ -135,8 +134,7 @@ def get_quota(uid: str, date_str: str) -> int:
     record_id = f"{uid}_{date_str}"
     try:
         res = supabase.table('user_quotas').select('used_count').eq('id', record_id).execute()
-        if res.data:
-            return res.data[0]['used_count']
+        if res.data: return res.data[0]['used_count']
     except Exception as e:
         logger.error(f"Get quota error: {e}")
     return 0
@@ -160,8 +158,7 @@ def get_available_cookies_count() -> int:
     try:
         res = supabase.table('cookies').select('id', count='exact').execute()
         return res.count if res.count else 0
-    except Exception:
-        return 0
+    except Exception: return 0
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -176,19 +173,49 @@ def current_date() -> str:
     return datetime.now(TIMEZONE).date().isoformat()
 
 def log_user(message):
-    """Record active user into Supabase and In-memory dict"""
     user_id = str(message.chat.id)
     username = message.from_user.username or message.from_user.first_name or "Unknown"
-    
     if user_id not in active_users or active_users[user_id] != username:
         active_users[user_id] = username
         try:
-            supabase.table('users').upsert({
-                'user_id': user_id,
-                'username': username
-            }).execute()
+            supabase.table('users').upsert({'user_id': user_id, 'username': username}).execute()
         except Exception as e:
             logger.error(f"Error upserting user to DB: {e}")
+
+# 📡 Subscribe / Channel Join စစ်ဆေးခြင်း
+def is_user_subscribed(user_id: int) -> bool:
+    if is_admin(user_id): return True
+    try:
+        member = bot.get_chat_member(FORCE_JOIN_CHANNEL, user_id)
+        return member.status in ['creator', 'administrator', 'member', 'restricted']
+    except Exception as e:
+        logger.error(f"Subscription check error: {e}")
+        return False
+
+# 📡 Live Logs ပို့ပေးမည့် Function
+def send_log_to_channel(user, status_text: str):
+    try:
+        bot_info = bot.get_me()
+        bot_username = bot_info.username
+        time_now = datetime.now(TIMEZONE).strftime("%I:%M %p (%d %b %Y)")
+        
+        log_text = (
+            f"🎬 <b>NETFLIX PRO UPDATE</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🤖 Bot : @{bot_username}\n"
+            f"👤 User : {user.first_name}\n"
+            f"🆔 <code>{user.id}</code>\n"
+            f"🎉 Status : {status_text}\n"
+            f"⏱️ Time : {time_now}\n\n"
+            f"👉 ဝင်ရောက်ရန်: https://t.me/{bot_username}"
+        )
+        
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🚀 Open Bot Now", url=f"https://t.me/{bot_username}"))
+        
+        bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="HTML", reply_markup=markup)
+    except Exception as e:
+        logger.error(f"Log Error: {e}")
 
 def normalize_cookie_text(raw_bytes: bytes) -> bytes:
     text = raw_bytes.decode('utf-8', errors='ignore')
@@ -254,6 +281,13 @@ def check_cookie_active(content_bytes: bytes) -> bool:
 # KEYBOARDS
 # ==========================================
 
+def get_join_channel_keyboard():
+    markup = types.InlineKeyboardMarkup()
+    url = f"https://t.me/{FORCE_JOIN_CHANNEL.replace('@', '')}"
+    markup.add(types.InlineKeyboardButton("📢 Channel သို့ Join မည်", url=url))
+    markup.add(types.InlineKeyboardButton("🔄 ကျွန်တော် Join ပြီးပါပြီ (စစ်ဆေးရန်)", callback_data="check_joined"))
+    return markup
+
 def get_main_menu(user_id=None):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(types.KeyboardButton("Netflix login link ယူရန်"))
@@ -287,32 +321,13 @@ def admin_panel_keyboard():
     )
     return kb
 
-def get_login_links_keyboard(url: str) -> types.InlineKeyboardMarkup:
-    """Helper function to create the 3 login buttons with exact paths based on nftoken"""
-    token_match = re.search(r'nftoken=([^\s&]+)', url)
-    token = token_match.group(1) if token_match else ""
-
-    pc_url = f"https://www.netflix.com/YourAccount?nftoken={token}"
-    mobile_url = f"https://www.netflix.com/unsupported?nftoken={token}"
-    tv_url = f"https://www.netflix.com/tv9?nftoken={token}"
-
-    kb = types.InlineKeyboardMarkup(row_width=2)
-    kb.add(
-        types.InlineKeyboardButton("💻 PC Login", url=pc_url),
-        types.InlineKeyboardButton("📱 Mobile Login", url=mobile_url)
-    )
-    kb.add(
-        types.InlineKeyboardButton("📺 TV Login", url=tv_url)
-    )
-    return kb
-
 # ==========================================
-# WEB SERVER
+# WEB SERVER (24/7 CRONJOB ENDPOINT)
 # ==========================================
 
 @app.route('/')
 def alive():
-    return "Bot is running online!"
+    return "Bot is running online and awake!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -328,6 +343,17 @@ def send_welcome_and_menu(message):
         bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
     log_user(message)
+    
+    # 📡 Check if user joined the channel
+    if not is_user_subscribed(message.from_user.id):
+        bot.reply_to(
+            message,
+            f"✦ <b>ချန်နယ် Join ရန် လိုအပ်ပါသည်</b>\n\nမင်္ဂလာပါ {message.from_user.first_name}! 👋\nBot ကို စတင်အသုံးပြုရန် အောက်ပါချန်နယ်သို့ အရင်ဆုံး Join ပေးပါ။",
+            reply_markup=get_join_channel_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
     bot.reply_to(
         message, 
         "မင်္ဂလာပါ ဝေ့ -Netflix Cookie ပါတဲ့ .txtဖိုင် ဖြစ်ဖြစ် textဖြစ်ဖြစ် ပို့လိုက်ကွာ\n\nအောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး Admin တင်ပေးထားတဲ့ အသင့်သုံး link‌ တွေထုတ်ကွာ", 
@@ -356,7 +382,7 @@ def stop_process(message):
         bot.reply_to(message, "ဘာပို့ထားလို့ ရပ်ခိုင်းနေတာလဲဟ", reply_markup=get_main_menu(message.from_user.id))
 
 # ==========================================
-# MENU BUTTONS HANDLER (NEW KEYBOARD LAYOUT)
+# MENU BUTTONS HANDLER
 # ==========================================
 
 @bot.message_handler(func=lambda message: message.text in MENU_BUTTONS)
@@ -371,6 +397,16 @@ def handle_menu_buttons(message):
 
     log_user(message)
 
+    # 📡 Check if user joined the channel
+    if not is_user_subscribed(user_id):
+        bot.send_message(
+            chat_id,
+            "✦ <b>ချန်နယ် Join ရန် လိုအပ်ပါသည်</b>\n\nBot ကို ဆက်လက်အသုံးပြုရန် အောက်ပါချန်နယ်သို့ အရင်ဆုံး Join ပေးပါ။",
+            reply_markup=get_join_channel_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
     if text == "ကျွန်ုပ်၏ Quota 📊":
         if is_admin(user_id) or is_vip(user_id):
             bot.send_message(chat_id, "👑 သင်ဟာ Admin/VIP ဖြစ်တဲ့အတွက် Quota အကန့်အသတ်မရှိ (Unlimited) သုံးနိုင်ပါတယ်။")
@@ -378,7 +414,7 @@ def handle_menu_buttons(message):
             limit_val = get_daily_limit()
             used = get_quota(str(user_id), current_date())
             remaining = max(0, limit_val - used)
-            bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{limit_val}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ")
+            bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{limit_val}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ", parse_mode="HTML")
         return
 
     elif text == "လက်ကျန်စာရင်း 📋":
@@ -396,7 +432,7 @@ def handle_menu_buttons(message):
         used = get_quota(str(user_id), current_date())
         
         if used >= user_limit:
-            bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{limit_val}</b> ခု ပြည့်သွားပြီကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ")
+            bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{limit_val}</b> ခု ပြည့်သွားပြီကွ။ ညသန်းခေါင်ယံမှာ Quota ပြန်လည်စတင်မယ်ကွ", parse_mode="HTML")
             return
 
         def process_claim_task():
@@ -437,8 +473,12 @@ def handle_menu_buttons(message):
                         chat_id=chat_id,
                         message_id=wait_msg.message_id,
                         text=(f"ရပြီဝေ့:\n\n{clean_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"),
-                        disable_web_page_preview=True
+                        disable_web_page_preview=True,
+                        parse_mode="HTML"
                     )
+                    
+                    # 📡 Send success log to channel
+                    send_log_to_channel(message.from_user, "အသင့်သုံး Link အောင်မြင်စွာ ထုတ်ယူသွားပါသည်။")
                 else:
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="လောလောဆယ် အဆင်ပြေသော Cookie များ ကုန်နေပါသည်ကွာ။ Admin တင်ပေးတာကို စောင့်ပါဦးကွာ။")
             except Exception as e:
@@ -449,7 +489,6 @@ def handle_menu_buttons(message):
         Thread(target=process_claim_task).start()
         return
 
-    # Admin Panel Actions
     elif text == "ZIP ဖိုင် တင်ရန် 📤":
         if not is_admin(user_id): return
         with _pending_lock: _pending_upload_admins.add(user_id)
@@ -539,13 +578,31 @@ def handle_callback(call: types.CallbackQuery) -> None:
 
     user_id = call.from_user.id
     chat_id = call.message.chat.id
-    bot.answer_callback_query(call.id)
 
     if is_banned(user_id):
+        bot.answer_callback_query(call.id)
         bot.send_message(chat_id, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
 
-    # Admin Panel Actions (Inline Callbacks)
+    # 📡 Verify Channel Joined Callback
+    if call.data == "check_joined":
+        if is_user_subscribed(user_id):
+            bot.answer_callback_query(call.id, "✅ အောင်မြင်ပါသည်။ ကြိုဆိုပါတယ်။")
+            bot.delete_message(chat_id, call.message.message_id)
+            bot.send_message(
+                chat_id, 
+                "မင်္ဂလာပါ ဝေ့ -Netflix Cookie ပါတဲ့ .txtဖိုင် ဖြစ်ဖြစ် textဖြစ်ဖြစ် ပို့လိုက်ကွာ\n\nအောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး Admin တင်ပေးထားတဲ့ အသင့်သုံး link‌ တွေထုတ်ကွာ", 
+                reply_markup=get_main_menu(user_id)
+            )
+            # You can also send a log when user successfully starts using the bot
+            # send_log_to_channel(call.from_user, "Bot ကို စတင်အသုံးပြုရန် Join ဝင်ရောက်လာပါပြီ။")
+        else:
+            bot.answer_callback_query(call.id, "⚠️ သင်သည် Channel သို့ အရင်ဆုံး Join ရန် လိုအပ်ပါသည်။", show_alert=True)
+        return
+
+    bot.answer_callback_query(call.id)
+
+    # Admin Panel Actions
     if not is_admin(user_id): return
 
     if call.data == "panel_add_vip":
@@ -602,17 +659,18 @@ def handle_callback(call: types.CallbackQuery) -> None:
 # FILE & MESSAGE HANDLERS
 # ==========================================
 
-def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
+def run_generator_task(chat_id, user, content_bytes, progress_msg_id=None):
+    user_id = str(user.id)
     acquired = file_lock.acquire(timeout=90)
     if not acquired:
-        bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu(int(user_id)))
+        bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး", reply_markup=get_main_menu(user.id))
         return
 
     try:
         if progress_msg_id: bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Cookie ကို စစ်ဆေးနေပါတယ်...")
 
         if not check_cookie_active(content_bytes):
-            bot.send_message(chat_id, "❌ ပို့လိုက်တဲ့ Cookie က သက်တမ်းကုန် (သို့) Sign up ပြန်တောင်းနေပါတယ်။ တခြားတစ်ခု စမ်းကြည့်ပါ။", reply_markup=get_main_menu(int(user_id)))
+            bot.send_message(chat_id, "❌ ပို့လိုက်တဲ့ Cookie က သက်တမ်းကုန် (သို့) Sign up ပြန်တောင်းနေပါတယ်။ တခြားတစ်ခု စမ်းကြည့်ပါ။", reply_markup=get_main_menu(user.id))
             if progress_msg_id: bot.delete_message(chat_id=chat_id, message_id=progress_msg_id)
             return
 
@@ -625,11 +683,13 @@ def run_generator_task(chat_id, user_id, content_bytes, progress_msg_id=None):
                 f"ရပြီဝေ့:\n\n{clean_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်",
                 disable_web_page_preview=True
             )
+            # 📡 Send success log
+            send_log_to_channel(user, "ကိုယ်ပိုင် Cookie ဖြင့် Link ပြောင်းလဲထုတ်ယူသွားပါသည်။")
         else:
-            bot.send_message(chat_id, "Token မတွေ့ဘူး (သို့မဟုတ် အကောင့်ပျက်နေသည်) နောက်တစ်ခုစမ်း", reply_markup=get_main_menu(int(user_id)))
+            bot.send_message(chat_id, "Token မတွေ့ဘူး (သို့မဟုတ် အကောင့်ပျက်နေသည်) နောက်တစ်ခုစမ်း", reply_markup=get_main_menu(user.id))
             bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id})")
     except Exception as e:
-        bot.send_message(chat_id, f"Error တက်ကုန်ပြီဟ: {e}", reply_markup=get_main_menu(int(user_id)))
+        bot.send_message(chat_id, f"Error တက်ကုန်ပြီဟ: {e}", reply_markup=get_main_menu(user.id))
     finally:
         file_lock.release()
 
@@ -644,6 +704,16 @@ def process_document_merged(message: types.Message):
         return
 
     log_user(message)
+    
+    # 📡 Check if user joined the channel
+    if not is_user_subscribed(message.from_user.id):
+        bot.send_message(
+            user_id,
+            "✦ <b>ချန်နယ် Join ရန် လိုအပ်ပါသည်</b>\n\nBot ကို ဆက်လက်အသုံးပြုရန် အောက်ပါချန်နယ်သို့ အရင်ဆုံး Join ပေးပါ။",
+            reply_markup=get_join_channel_keyboard(),
+            parse_mode="HTML"
+        )
+        return
 
     with _pending_lock: upload_expected = user_id in _pending_upload_admins
 
@@ -673,7 +743,6 @@ def process_document_merged(message: types.Message):
 
             extracted_count = len(cookies_to_insert)
             
-            # Batch Insert into Supabase (Chunks of 500)
             chunk_size = 500
             for i in range(0, extracted_count, chunk_size):
                 chunk = cookies_to_insert[i:i + chunk_size]
@@ -708,7 +777,7 @@ def process_document_merged(message: types.Message):
     def task():
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
-        run_generator_task(message.chat.id, str_user_id, downloaded_file, progress_msg.message_id)
+        run_generator_task(message.chat.id, message.from_user, downloaded_file, progress_msg.message_id)
 
     Thread(target=task).start()
 
@@ -726,6 +795,16 @@ def handle_text_merged(message: types.Message):
         return
 
     log_user(message)
+    
+    # 📡 Check if user joined the channel
+    if not is_user_subscribed(message.from_user.id):
+        bot.send_message(
+            chat_id,
+            "✦ <b>ချန်နယ် Join ရန် လိုအပ်ပါသည်</b>\n\nBot ကို ဆက်လက်အသုံးပြုရန် အောက်ပါချန်နယ်သို့ အရင်ဆုံး Join ပေးပါ။",
+            reply_markup=get_join_channel_keyboard(),
+            parse_mode="HTML"
+        )
+        return
 
     with _pending_lock: upload_expected = chat_id in _pending_upload_admins
     if upload_expected and is_admin(chat_id):
@@ -749,7 +828,7 @@ def handle_text_merged(message: types.Message):
     progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
 
     def task():
-        run_generator_task(chat_id, user_id, message.text.encode('utf-8'), progress_msg.message_id)
+        run_generator_task(chat_id, message.from_user, message.text.encode('utf-8'), progress_msg.message_id)
 
     Thread(target=task).start()
 
@@ -759,6 +838,7 @@ def handle_text_merged(message: types.Message):
 
 if __name__ == "__main__":
     load_cached_data()
+    # 🌐 ဤနေရာတွင် Flask Web Server အလုပ်လုပ်နေမည်ဖြစ်ပြီး Cron-job အတွက် အသင့်ဖြစ်ပါသည်
     Thread(target=run_web, daemon=True).start()
-    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Supabase Dynamic Users, Limits, VIP & Block စနစ် ဖြင့်)...")
+    logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ (Supabase & Force Join စနစ် ဖြင့်)...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
