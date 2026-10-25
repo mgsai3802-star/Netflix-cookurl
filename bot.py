@@ -66,6 +66,7 @@ app = Flask(__name__)
 
 file_lock = threading.Lock()
 running_process = {}
+awaiting_broadcast = {}
 _pending_upload_admins: dict[int, str] = {}
 _pending_lock = threading.Lock()
 
@@ -254,62 +255,10 @@ def normalize_cookie_text(raw_bytes: bytes) -> bytes:
             
     return ('\n'.join(fixed_lines) + '\n').encode('utf-8')
 
-def check_cookie_active(content_bytes: bytes) -> bool:
-    try:
-        cookie_dict = {}
-        text = content_bytes.decode('utf-8', errors='ignore')
-        
-        for line in text.splitlines():
-            line = line.strip()
-            m = COOKIE_LINE_RE.match(line)
-            if m:
-                cookie_dict[m.group('name')] = m.group('value')
-        
-        netflix_id = cookie_dict.get("NetflixId")
-        if not netflix_id:
-            match = re.search(r'NetflixId=([^;,\s]+)', text)
-            if match:
-                netflix_id = match.group(1)
-                
-        secure_netflix_id = cookie_dict.get("SecureNetflixId")
-        if not secure_netflix_id:
-            match = re.search(r'SecureNetflixId=([^;,\s]+)', text)
-            if match:
-                secure_netflix_id = match.group(1)
-        else:
-            secure_netflix_id = ""
-        
-        if not netflix_id:
-            return False
-            
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Cookie": f"NetflixId={netflix_id}; SecureNetflixId={secure_netflix_id}"
-        }
-        
-        res = requests.get(
-            "https://www.netflix.com/browse", 
-            headers=headers, 
-            allow_redirects=True, 
-            timeout=15
-        )
-        
-        url_lower = res.url.lower()
-        text_lower = res.text.lower()
-        
-        if any(k in url_lower for k in ["youraccount", "signup", "finishsignup"]):
-            return False
-            
-        if any(k in text_lower for k in ["restart your membership", "finish sign up", "finish your sign-up", "step 1 of"]):
-            return False
-            
-        return True
-    except Exception as e:
-        logger.error(f"Cookie check error: {e}")
-        return False
 
 def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
-    input_path = f"input_{user_id}_{datetime.now().timestamp()}.txt"
+    # 📌 Token generator script must use "input.txt". Locked securely by file_lock.
+    input_path = "input.txt"
     try:
         fixed_content = normalize_cookie_text(content_bytes)
         with open(input_path, "wb") as f:
@@ -324,7 +273,7 @@ def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
         running_process[user_id] = proc
         
         try:
-            stdout, stderr = proc.communicate(timeout=120)
+            stdout, stderr = proc.communicate(timeout=60) # Reduced timeout for speed
         except subprocess.TimeoutExpired:
             proc.kill()
             stdout, stderr = proc.communicate()
@@ -352,17 +301,9 @@ def run_generator_task(chat_id, user, content_bytes, progress_msg_id=None):
         
     try:
         if progress_msg_id:
-            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Cookie ကို စစ်ဆေးနေပါတယ်...")
+            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ...")
             
-        if not check_cookie_active(content_bytes):
-            bot.send_message(chat_id, "❌ ပို့လိုက်တဲ့ Cookie က သက်တမ်းကုန် (သို့) Sign up ပြန်တောင်းနေပါတယ်။ တခြားတစ်ခု စမ်းကြည့်ပါ။")
-            if progress_msg_id:
-                bot.delete_message(chat_id=chat_id, message_id=progress_msg_id)
-            return
-            
-        if progress_msg_id:
-            bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ။")
-            
+        # 📌 check_cookie_active ဖြုတ်လိုက်ပါပြီ။ generator ကို တိုက်ရိုက်ခေါ်ပါမည်။
         clean_url = execute_token_generation(content_bytes, str(user.id), chat_id)
         
         if clean_url:
@@ -581,7 +522,6 @@ def send_welcome_and_menu(message):
         )
         return
         
-    # 📌 အစ်ကိုတောင်းဆိုထားသော Intro စာသားအသစ်
     welcome_text = (
         "👋 မင်္ဂလာပါ ဝေ့... \n\n"
         "အောက်ပါ ဝန်ဆောင်မှုတွေကို အလွယ်တကူ ရယူနိုင်ပါပြီ-\n\n"
@@ -777,7 +717,7 @@ def handle_menu_buttons(message):
                 bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး")
                 return
                 
-            wait_msg = bot.send_message(chat_id, "⏳ Cookie ကို စစ်ဆေးပြီး Token ထုတ်နေပါပြီ ခဏစောင့်ကွာ...")
+            wait_msg = bot.send_message(chat_id, "⏳ Token ထုတ်နေပါပြီ ခဏစောင့်ကွာ...")
             
             try:
                 clean_url = None
@@ -795,9 +735,7 @@ def handle_menu_buttons(message):
                     supabase.table('cookies').delete().eq('id', cookie_id).execute()
                     attempts += 1
                     
-                    if not check_cookie_active(content_bytes):
-                        continue
-                        
+                    # 📌 Error မတက်တော့ဘဲ တိုက်ရိုက် generate လုပ်ပါမည်
                     url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
                     if url_result:
                         clean_url = url_result
@@ -918,7 +856,7 @@ def process_unban(message):
     bot.send_message(message.chat.id, f"✅ User ID <code>{html.escape(uid)}</code> ကို Unblock လုပ်ပေးလိုက်ပါပြီ။", parse_mode="HTML")
 
 def process_broadcast(message):
-    if message.text in ["/start 🔄", "/cancel"] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", "/cancel", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
         bot.send_message(message.chat.id, "❌ Broadcast ပယ်ဖျက်လိုက်ပါပြီ။")
         return
         
@@ -1033,7 +971,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
         bot.send_message(chat_id, f"🚫 Block ထားသော User များ:\n\n{html.escape(banned_list_str)}")
         
     elif call.data == "panel_list_users":
-        # 📌 User တွေများလို့ Error 400 မတက်အောင် အပိုင်းခွဲပြီး ပို့ပေးပါမည်
         if not active_users:
             bot.send_message(chat_id, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
         else:
@@ -1066,7 +1003,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
             bot.send_message(chat_id, f"Error clearing cookies: {html.escape(str(e))}")
             
     elif call.data == "panel_broadcast":
-        # 📌 ပိုမိုတည်ငြိမ်သော Next Step Handler စနစ်သို့ ပြောင်းလဲထားပါသည်
         msg = bot.send_message(chat_id, "📢 Broadcast စာသားကို ရိုက်ပို့ပါ။ (ပယ်ဖျက်လိုပါက /cancel ဟု ရိုက်ပါ)")
         bot.register_next_step_handler(msg, process_broadcast)
 
@@ -1143,7 +1079,7 @@ def process_document_merged(message: types.Message):
         )
         return
 
-    progress_msg = bot.reply_to(message, "ဖိုင်ငါရပြီ - အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
+    progress_msg = bot.reply_to(message, "ဖိုင်ငါရပြီ - Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ...")
     
     def document_task():
         try:
@@ -1179,7 +1115,7 @@ def handle_text_merged(message: types.Message):
     if is_banned(user_id) or not check_bot_open(message):
         return
 
-    progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
+    progress_msg = bot.reply_to(message, "စာသားရပြီ - Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ...")
     
     def text_task():
         run_generator_task(message.chat.id, message.from_user, message.text.encode('utf-8'), progress_msg.message_id)
