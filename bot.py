@@ -207,7 +207,6 @@ def send_log_to_channel(user, status_text: str):
         else:
             masked_id = uid_str
             
-        # 📌 HTML Error မတက်စေရန် နာမည်ကို html.escape() ခံပေးထားပါသည်
         safe_name = html.escape(user.first_name or "Unknown")
             
         log_text = (
@@ -391,7 +390,7 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
     """နောက်ကွယ်မှ Browser ဖြင့် TV Code ကို Auto ရိုက်ထည့်ပေးမည့် စနစ်"""
     playwright_cookies = []
     
-        for line in cookie_text.splitlines():
+    for line in cookie_text.splitlines():
         line = line.strip()
         if not line or line.startswith('#'):
             continue
@@ -399,7 +398,8 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
         m = COOKIE_LINE_RE.match(line)
         if m:
             domain = m.group('domain')
-            # 📌 Spotify အတွက်ဆိုရင် spotify.com ပါမှ ထည့်မည် (Error မတက်အောင် ကာကွယ်ရန်)
+            
+            # 📌 Filter cookies to prevent invalid domain protocol errors (Spotify/HBO fix)
             if service == "spotify" and "spotify.com" not in domain:
                 continue
             elif service == "netflix" and "netflix.com" not in domain:
@@ -417,7 +417,6 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
                 "domain": domain,
                 "path": m.group('path')
             })
-
 
     try:
         with sync_playwright() as p:
@@ -475,7 +474,7 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
     except PlaywrightTimeoutError:
         return {"ok": False, "msg": "⚠️ Browser ချိတ်ဆက်မှု အချိန်ကြာလွန်းနေပါသည်။ (Timeout)"}
     except Exception as e:
-        return {"ok": False, "msg": f"⚠️ Browser Automation Error: {html.escape(str(e))}"}
+        return {"ok": False, "msg": f"⚠️ Browser Automation Error: {html.escape(str(e)}"}
 
 # ==========================================
 # KEYBOARDS & MENUS
