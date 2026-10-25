@@ -147,7 +147,7 @@ def increment_quota(uid: str, date_str: str) -> int:
 
 def get_available_cookies_count() -> int:
     try:
-        res = supabase.table('cookies').select('id', count='exact').execute()
+        res = supabase.table('cookies').select('id', count='exact').eq('service_type', 'netflix').execute()
         if res.count:
             return res.count
         return 0
@@ -400,9 +400,7 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
             domain = m.group('domain')
             
             # 📌 Filter cookies to prevent invalid domain protocol errors
-            if service == "spotify" and not ("spotify" in domain):
-                continue
-            elif service == "netflix" and not ("netflix" in domain):
+            if service == "netflix" and not ("netflix" in domain):
                 continue
             elif service == "hbo" and not ("max" in domain or "hbo" in domain):
                 continue
@@ -453,15 +451,7 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
             elif service == "crunchyroll":
                 page.goto("https://www.crunchyroll.com/activate", timeout=60000)
                 page.wait_for_load_state("networkidle")
-                page.wait_for_timeout(2000) # Crunchyroll needs a bit more wait time
-                page.keyboard.type(tv_code, delay=150)
-                page.keyboard.press("Enter")
-                page.wait_for_timeout(4000)
-                
-            elif service == "spotify":
-                page.goto("https://www.spotify.com/us/pair/", timeout=60000)
-                page.wait_for_load_state("networkidle")
-                page.wait_for_timeout(2000) # Spotify might need a bit more time to render inputs
+                page.wait_for_timeout(2000)
                 page.keyboard.type(tv_code, delay=150)
                 page.keyboard.press("Enter")
                 page.wait_for_timeout(4000)
@@ -513,15 +503,12 @@ def get_tv_login_keyboard():
     markup = types.InlineKeyboardMarkup()
     
     markup.row(
-        types.InlineKeyboardButton("📺 Netflix TV Login", callback_data="tv_netflix"), 
-        types.InlineKeyboardButton("🟣 HBO TV Login", callback_data="tv_hbo")
+        types.InlineKeyboardButton("📺 Netflix TV", callback_data="tv_netflix"), 
+        types.InlineKeyboardButton("🟣 HBO TV", callback_data="tv_hbo")
     )
     markup.row(
         types.InlineKeyboardButton("📺 Prime Video TV", callback_data="tv_prime"), 
         types.InlineKeyboardButton("🍥 Crunchyroll TV", callback_data="tv_crunchyroll")
-    )
-    markup.row(
-        types.InlineKeyboardButton("🟢 Spotify TV Login", callback_data="tv_spotify")
     )
     markup.row(
         types.InlineKeyboardButton("🔙 Back (နောက်သို့)", callback_data="tv_back")
@@ -598,13 +585,25 @@ def send_welcome_and_menu(message):
         )
         return
         
+    welcome_text = (
+        "👋 <b>မင်္ဂလာပါ ဝေ့... </b>\n\n"
+        "အောက်ပါ ဝန်ဆောင်မှုတွေကို အလွယ်တကူ ရယူနိုင်ပါပြီ-\n\n"
+        "📺 <b>TV Login Services (Auto Connect)</b>\n"
+        "▪️ Netflix, HBO Max, Prime Video, Crunchyroll စတဲ့ TV Code တွေကို ပို့ပေးရုံနဲ့ အလိုအလျောက် ချိတ်ဆက်ပေးပါမယ်။\n\n"
+        "🔗 <b>Netflix Cookie to URL Link</b>\n"
+        "▪️ အသင့်သုံး Netflix Cookie ကနေ 15 မိနစ်ခံ Token Link ကို 'Netflix login link ယူရန်' ခလုတ်နှိပ်ပြီး ထုတ်ယူနိုင်ပါတယ်။\n"
+        "▪️ (သို့) ကိုယ်ပိုင် Cookie `.txt` ဖိုင်/စာသား များကို Bot ဆီ တိုက်ရိုက်ပေးပို့ပြီးလည်း လင့်ခ်ပြောင်းလဲနိုင်ပါတယ်။\n\n"
+        "အောက်ပါ Menu ခလုတ်များကို နှိပ်၍ စတင် အသုံးပြုနိုင်ပါပြီ 👇"
+    )
+        
     bot.reply_to(
         message, 
-        "မင်္ဂလာပါ ဝေ့ - အောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး အသုံးပြုနိုင်ပါပြီ။", 
-        reply_markup=get_main_menu(message.from_user.id)
+        welcome_text, 
+        reply_markup=get_main_menu(message.from_user.id),
+        parse_mode="HTML"
     )
 
-@bot.message_handler(commands=['ntv', 'hbotv', 'pvtv', 'crtv', 'sptv'])
+@bot.message_handler(commands=['ntv', 'hbotv', 'pvtv', 'crtv'])
 def handle_tv_commands(message):
     user_id = message.from_user.id
     
@@ -635,12 +634,13 @@ def handle_tv_commands(message):
         '/ntv': 'netflix', 
         '/hbotv': 'hbo', 
         '/pvtv': 'prime', 
-        '/crtv': 'crunchyroll', 
-        '/sptv': 'spotify'
+        '/crtv': 'crunchyroll'
     }
     service = service_map.get(cmd)
     
-    # 📌 ဤနေရာတွင် 'Browser ဖွင့်၍' စာသားကို ဖြုတ်လိုက်ပါပြီ။
+    if not service:
+        return
+    
     progress = bot.reply_to(
         message, 
         f"⏳ {service.upper()} သို့ ချိတ်ဆက်နေပါသည်... (စက္ကန့်အနည်းငယ် ကြာနိုင်ပါသည်)", 
@@ -739,7 +739,7 @@ def handle_menu_buttons(message):
         available_cookies = get_available_cookies_count()
         bot.send_message(
             chat_id, 
-            f"📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\nစုစုပေါင်း Cookie: <b>{available_cookies}</b> ခု", 
+            f"📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\nNetflix Token သီးသန့် အသင့်ရှိသော Cookie: <b>{available_cookies}</b> ခု", 
             parse_mode="HTML"
         )
 
@@ -782,7 +782,8 @@ def handle_menu_buttons(message):
             try:
                 clean_url = None
                 while True:
-                    res = supabase.table('cookies').select('id, content').or_('service_type.eq.netflix,service_type.is.null').limit(1).execute()
+                    # 📌 တခြား Cookie တွေ မရောစေရန် service_type ကို 'netflix' ဟုသာ တိကျစွာ ခေါ်ယူပါသည်
+                    res = supabase.table('cookies').select('id, content').eq('service_type', 'netflix').limit(1).execute()
                     if not res.data:
                         break
                         
@@ -819,7 +820,7 @@ def handle_menu_buttons(message):
                     bot.edit_message_text(
                         chat_id=chat_id, 
                         message_id=wait_msg.message_id, 
-                        text="လောလောဆယ် အဆင်ပြေသော Cookie များ ကုန်နေပါသည်ကွာ။"
+                        text="လောလောဆယ် အဆင်ပြေသော Netflix Cookie များ ကုန်နေပါသည်ကွာ။"
                     )
             except Exception as e:
                 bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error: {html.escape(str(e))}")
@@ -837,8 +838,7 @@ def handle_menu_buttons(message):
             types.InlineKeyboardButton("Netflix", callback_data="zip_netflix"), 
             types.InlineKeyboardButton("HBO", callback_data="zip_hbo"),
             types.InlineKeyboardButton("Prime Video", callback_data="zip_prime"), 
-            types.InlineKeyboardButton("Crunchyroll", callback_data="zip_crunchyroll"),
-            types.InlineKeyboardButton("Spotify", callback_data="zip_spotify")
+            types.InlineKeyboardButton("Crunchyroll", callback_data="zip_crunchyroll")
         )
         
         bot.send_message(
@@ -952,8 +952,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
             "tv_netflix": "╔══════════════════════════╗\n║   📺  N E T F L I X   T V\n╚══════════════════════════╝\n\n1. Open Netflix on your TV\n2. Grab the 8-digit code\n3. Send it here\n\nSend /ntv 12345678",
             "tv_hbo": "╔══════════════════════════╗\n║   🟣  H B O   T V   L O G I N\n╚══════════════════════════╝\n\n1. Open HBO Max on your TV\n2. Grab the 6-digit code\n3. Send it here\n\nSend /hbotv 123456",
             "tv_prime": "╔══════════════════════════╗\n║   📺  P R I M E   V I D E O   T V\n╚══════════════════════════╝\n\n1. Open Prime Video on your TV\n2. Grab the 6-character code\n3. Send it here\n\nSend /pvtv A7HSUW",
-            "tv_crunchyroll": "╔══════════════════════════╗\n║   🍥  C R U N C H Y R O L L   T V\n╚══════════════════════════╝\n\n1. Open Crunchyroll on your TV\n2. Grab the 6-character code\n3. Send it here\n\nSend /crtv ABC123",
-            "tv_spotify": "╔══════════════════════════╗\n║   🟢  S P O T I F Y   T V\n╚══════════════════════════╝\n\n1. Open Spotify on your TV\n2. Grab the pairing code\n3. Send it here\n\nSend /sptv ABCDEF"
+            "tv_crunchyroll": "╔══════════════════════════╗\n║   🍥  C R U N C H Y R O L L   T V\n╚══════════════════════════╝\n\n1. Open Crunchyroll on your TV\n2. Grab the 6-character code\n3. Send it here\n\nSend /crtv ABC123"
         }
         
         bot.edit_message_text(
