@@ -5,3 +5,4 @@ rarfile
 urllib3
 tzdata
 supabase
+playwright==1.42.0
