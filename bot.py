@@ -1,4 +1,4 @@
-"""Combined Telegram bot with Users, VIPs, Bans, Cookies, Settings, TV Login Automation, and Quotas."""
+"""Combined Telegram bot with Users, VIPs, Bans, Cookies, Settings, TV Login (Playwright Browser Automation)."""
 
 from __future__ import annotations
 
@@ -13,12 +13,14 @@ import zipfile as zip_lib
 import threading
 import logging
 import requests
+import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Flask
 from threading import Thread
 from supabase import create_client, Client
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # ==========================================
 # CONFIGURATION & INITIALIZATION
@@ -46,17 +48,16 @@ vip_users: set[str] = set()
 bot_is_open = True
 
 DEFAULT_DAILY_LIMIT = int(os.getenv("DAILY_LIMIT", "10"))
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))) # 20MB for ZIP
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
 
 def configured_timezone() -> ZoneInfo:
-    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Yangon")
     try:
-        return ZoneInfo(timezone_name)
+        return ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Yangon"))
     except ZoneInfoNotFoundError:
         return ZoneInfo("Asia/Yangon")
 
 TIMEZONE = configured_timezone()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("combined_bot")
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML", threaded=True)
@@ -77,7 +78,7 @@ MENU_BUTTONS = [
     "လက်ကျန်စာရင်း 📋", 
     "ZIP ဖိုင် တင်ရန် 📤", 
     "Admin Panel ⚙️", 
-    "🌟 Get VIP 🌟",
+    "🌟 Get VIP 🌟", 
     TV_LOGIN_BTN
 ]
 
@@ -94,115 +95,117 @@ def load_cached_data():
     global bot_is_open
     try:
         users_res = supabase.table('users').select('user_id, username').execute()
-        for u in users_res.data: 
+        for u in users_res.data:
             active_users[u['user_id']] = u.get('username') or 'Unknown'
-            
+
         vip_res = supabase.table('vip_users').select('user_id').execute()
-        for v in vip_res.data: 
+        for v in vip_res.data:
             vip_users.add(v['user_id'])
-            
+
         ban_res = supabase.table('banned_users').select('user_id').execute()
-        for b in ban_res.data: 
+        for b in ban_res.data:
             banned_users.add(b['user_id'])
-            
+
         status_res = supabase.table('bot_settings').select('value').eq('key', 'bot_status').execute()
-        if status_res.data and status_res.data[0]['value'] == 'closed': 
+        if status_res.data and status_res.data[0]['value'] == 'closed':
             bot_is_open = False
             
-    except Exception as e: 
-        logger.error(f"Error loading cached data: {e}")
+    except Exception as e:
+        logger.error(f"Cache load error: {e}")
 
 def get_daily_limit() -> int:
     try:
         res = supabase.table('bot_settings').select('value').eq('key', 'daily_limit').execute()
-        if res.data: 
+        if res.data:
             return int(res.data[0]['value'])
-    except Exception as e: 
-        logger.error(f"Get daily limit error: {e}")
+    except Exception as e:
+        logger.error(f"Get limit error: {e}")
     return DEFAULT_DAILY_LIMIT
 
 def get_quota(uid: str, date_str: str) -> int:
-    record_id = f"{uid}_{date_str}"
     try:
-        res = supabase.table('user_quotas').select('used_count').eq('id', record_id).execute()
-        if res.data: 
+        res = supabase.table('user_quotas').select('used_count').eq('id', f"{uid}_{date_str}").execute()
+        if res.data:
             return res.data[0]['used_count']
-    except Exception as e: 
+    except Exception as e:
         logger.error(f"Get quota error: {e}")
     return 0
 
 def increment_quota(uid: str, date_str: str) -> int:
-    record_id = f"{uid}_{date_str}"
-    current = get_quota(uid, date_str)
-    new_count = current + 1
+    new_count = get_quota(uid, date_str) + 1
     try:
         supabase.table('user_quotas').upsert({
-            'id': record_id, 
+            'id': f"{uid}_{date_str}", 
             'user_id': uid, 
             'claim_date': date_str, 
             'used_count': new_count
         }).execute()
-    except Exception as e: 
+    except Exception as e:
         logger.error(f"Increment quota error: {e}")
     return new_count
 
 def get_available_cookies_count() -> int:
     try:
         res = supabase.table('cookies').select('id', count='exact').execute()
-        return res.count if res.count else 0
-    except Exception: 
+        if res.count:
+            return res.count
+        return 0
+    except Exception as e:
+        logger.error(f"Get cookies count error: {e}")
         return 0
 
-def is_admin(user_id: int) -> bool: 
+def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
-def is_banned(user_id: int | str) -> bool: 
+def is_banned(user_id: int | str) -> bool:
     return str(user_id) in banned_users
 
-def is_vip(user_id: int | str) -> bool: 
+def is_vip(user_id: int | str) -> bool:
     return str(user_id) in vip_users
 
-def current_date() -> str: 
+def current_date() -> str:
     return datetime.now(TIMEZONE).date().isoformat()
 
 def log_user(message):
-    user_id = str(message.chat.id)
-    username = message.from_user.username or message.from_user.first_name or "Unknown"
-    if user_id not in active_users or active_users[user_id] != username:
-        active_users[user_id] = username
-        try: 
-            supabase.table('users').upsert({'user_id': user_id, 'username': username}).execute()
-        except Exception as e: 
-            logger.error(f"Error upserting user to DB: {e}")
+    uid = str(message.chat.id)
+    uname = message.from_user.username or message.from_user.first_name or "Unknown"
+    
+    if uid not in active_users or active_users[uid] != uname:
+        active_users[uid] = uname
+        try:
+            supabase.table('users').upsert({'user_id': uid, 'username': uname}).execute()
+        except Exception as e:
+            logger.error(f"User log error: {e}")
 
 def is_user_subscribed(user_id: int) -> bool:
-    if is_admin(user_id): 
+    if is_admin(user_id):
         return True
     try:
         member = bot.get_chat_member(FORCE_JOIN_CHANNEL, user_id)
-        return member.status in ['creator', 'administrator', 'member', 'restricted']
+        if member.status in ['creator', 'administrator', 'member', 'restricted']:
+            return True
+        return False
     except Exception as e:
         logger.error(f"Subscription check error: {e}")
         return False
 
 def check_bot_open(message) -> bool:
     if not bot_is_open and not is_admin(message.from_user.id):
-        bot.reply_to(
-            message, 
-            "⚠️ <b>Bot ကို ယာယီ ပိတ်ထားပါသည် (Maintenance)။</b>\n\nAdmin မှ ပြန်လည်မဖွင့်ပေးမချင်း အသုံးပြု၍ မရသေးပါ။", 
-            parse_mode="HTML"
-        )
+        bot.reply_to(message, "⚠️ <b>Bot ကို ယာယီ ပိတ်ထားပါသည် (Maintenance)။</b>", parse_mode="HTML")
         return False
     return True
 
 def send_log_to_channel(user, status_text: str):
     try:
         bot_info = bot.get_me()
-        bot_username = bot_info.username
         time_now = datetime.now(TIMEZONE).strftime("%I:%M %p (%d %b %Y)")
         uid_str = str(user.id)
-        masked_id = uid_str[:3] + "****" + uid_str[-2:] if len(uid_str) > 5 else uid_str
         
+        if len(uid_str) > 5:
+            masked_id = uid_str[:3] + "****" + uid_str[-2:]
+        else:
+            masked_id = uid_str
+            
         log_text = (
             f"🎬 <b>PREMIUM UPDATE</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -213,80 +216,95 @@ def send_log_to_channel(user, status_text: str):
         )
         
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🚀 Open Bot Now", url=f"https://t.me/{bot_username}"))
+        markup.add(types.InlineKeyboardButton("🚀 Open Bot Now", url=f"https://t.me/{bot_info.username}"))
+        
         bot.send_message(LOG_CHANNEL_ID, log_text, parse_mode="HTML", reply_markup=markup)
     except Exception as e:
-        logger.error(f"Log Error: {e}")
+        logger.error(f"Log send error: {e}")
 
 # ==========================================
 # COOKIE PROCESSING (ORIGINAL NF-TOKEN)
 # ==========================================
 
 def normalize_cookie_text(raw_bytes: bytes) -> bytes:
-    text = raw_bytes.decode('utf-8', errors='ignore')
     fixed_lines = []
+    text = raw_bytes.decode('utf-8', errors='ignore')
+    
     for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith('#'):
+        line = line.strip()
+        if not line or line.startswith('#'):
             fixed_lines.append(line)
             continue
-        m = COOKIE_LINE_RE.match(stripped)
+            
+        m = COOKIE_LINE_RE.match(line)
         if m:
-            fixed_lines.append('\t'.join([
-                m.group('domain'), m.group('flag1'), m.group('path'),
-                m.group('secure'), m.group('expiry'),
-                m.group('name'), m.group('value')
-            ]))
+            fixed_line = '\t'.join([
+                m.group('domain'), 
+                m.group('flag1'), 
+                m.group('path'), 
+                m.group('secure'), 
+                m.group('expiry'), 
+                m.group('name'), 
+                m.group('value')
+            ])
+            fixed_lines.append(fixed_line)
         else:
             fixed_lines.append(line)
+            
     return ('\n'.join(fixed_lines) + '\n').encode('utf-8')
 
 def check_cookie_active(content_bytes: bytes) -> bool:
     try:
-        text = content_bytes.decode('utf-8', errors='ignore')
         cookie_dict = {}
+        text = content_bytes.decode('utf-8', errors='ignore')
+        
         for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith('#'): 
-                continue
-            m = COOKIE_LINE_RE.match(stripped)
-            if m: 
+            line = line.strip()
+            m = COOKIE_LINE_RE.match(line)
+            if m:
                 cookie_dict[m.group('name')] = m.group('value')
         
-        if "NetflixId" not in cookie_dict:
-            m = re.search(r'NetflixId=([^;,\s]+)', text)
-            if m: 
-                cookie_dict["NetflixId"] = m.group(1)
-        if "SecureNetflixId" not in cookie_dict:
-            m = re.search(r'SecureNetflixId=([^;,\s]+)', text)
-            if m: 
-                cookie_dict["SecureNetflixId"] = m.group(1)
-
         netflix_id = cookie_dict.get("NetflixId")
-        secure_netflix_id = cookie_dict.get("SecureNetflixId", "")
-
-        if not netflix_id: 
+        if not netflix_id:
+            match = re.search(r'NetflixId=([^;,\s]+)', text)
+            if match:
+                netflix_id = match.group(1)
+                
+        secure_netflix_id = cookie_dict.get("SecureNetflixId")
+        if not secure_netflix_id:
+            match = re.search(r'SecureNetflixId=([^;,\s]+)', text)
+            if match:
+                secure_netflix_id = match.group(1)
+        else:
+            secure_netflix_id = ""
+        
+        if not netflix_id:
             return False
-
+            
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Cookie": f"NetflixId={netflix_id}; SecureNetflixId={secure_netflix_id}"
+        }
+        
         res = requests.get(
-            "https://www.netflix.com/browse",
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Cookie": f"NetflixId={netflix_id}; SecureNetflixId={secure_netflix_id}"
-            },
+            "https://www.netflix.com/browse", 
+            headers=headers, 
             allow_redirects=True, 
             timeout=15
         )
-
+        
         url_lower = res.url.lower()
         text_lower = res.text.lower()
-        if any(k in url_lower for k in ["youraccount", "signup", "finishsignup"]) or \
-           any(k in text_lower for k in ["restart your membership", "finish sign up", "step 1 of"]):
+        
+        if any(k in url_lower for k in ["youraccount", "signup"]):
+            return False
+            
+        if any(k in text_lower for k in ["restart your membership", "finish sign up", "step 1 of"]):
             return False
             
         return True
     except Exception as e:
-        logger.error(f"Cookie validation error: {e}")
+        logger.error(f"Cookie check error: {e}")
         return False
 
 def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
@@ -295,9 +313,9 @@ def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
         fixed_content = normalize_cookie_text(content_bytes)
         with open(input_path, "wb") as f:
             f.write(fixed_content)
-
+            
         proc = subprocess.Popen(
-            [sys.executable, 'nf-token-generator.py'],
+            [sys.executable, 'nf-token-generator.py'], 
             stdout=subprocess.PIPE, 
             stderr=subprocess.PIPE, 
             text=True
@@ -312,9 +330,9 @@ def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
             return None
         finally:
             running_process.pop(user_id, None)
-
+            
         match = re.search(r'(https://netflix\.com/\?nftoken=[^\s]+)', stdout or "")
-        if match: 
+        if match:
             return match.group(1)
         return None
         
@@ -326,89 +344,120 @@ def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
             os.remove(input_path)
 
 def run_generator_task(chat_id, user, content_bytes, progress_msg_id=None):
-    user_id = str(user.id)
     acquired = file_lock.acquire(timeout=90)
     if not acquired:
         bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး")
         return
-
+        
     try:
-        if progress_msg_id: 
+        if progress_msg_id:
             bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="TXT ရပြီ Cookie ကို စစ်ဆေးနေပါတယ်...")
-
+            
         if not check_cookie_active(content_bytes):
             bot.send_message(chat_id, "❌ ပို့လိုက်တဲ့ Cookie က သက်တမ်းကုန် (သို့) Sign up ပြန်တောင်းနေပါတယ်။ တခြားတစ်ခု စမ်းကြည့်ပါ။")
-            if progress_msg_id: 
+            if progress_msg_id:
                 bot.delete_message(chat_id=chat_id, message_id=progress_msg_id)
             return
-
-        if progress_msg_id: 
+            
+        if progress_msg_id:
             bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ။")
-
-        clean_url = execute_token_generation(content_bytes, user_id, chat_id)
+            
+        clean_url = execute_token_generation(content_bytes, str(user.id), chat_id)
         
         if clean_url:
             bot.send_message(
-                chat_id,
-                f"ရပြီဝေ့:\n\n{clean_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်",
+                chat_id, 
+                f"ရပြီဝေ့:\n\n{clean_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်", 
                 disable_web_page_preview=True
             )
             send_log_to_channel(user, "ကိုယ်ပိုင် Cookie ဖြင့် Token Link ထုတ်ယူသွားပါသည်။")
         else:
             bot.send_message(chat_id, "Token မတွေ့ဘူး (သို့မဟုတ် အကောင့်ပျက်နေသည်) နောက်တစ်ခုစမ်း")
-            bot.send_message(ADMIN_ID, f"⚠️ Token မတွေ့ဘူး (user {user_id})")
             
     except Exception as e:
-        bot.send_message(chat_id, f"Error တက်ကုန်ပြီဟ: {e}")
+        bot.send_message(chat_id, f"Error: {e}")
     finally:
         file_lock.release()
 
 # ==========================================
-# TV LOGIN AUTOMATION (API SUBMITTER)
+# 🌟 HEADLESS BROWSER TV LOGIN (PLAYWRIGHT)
 # ==========================================
 
-def submit_tv_code_to_api(service: str, tv_code: str, cookie_text: str) -> dict:
-    """Netscape format cookie မှ HTTP Header cookie string သို့ ပြောင်းလဲခြင်း"""
-    cookie_dict = {}
-    for line in cookie_text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith('#'): 
-            continue
-        m = COOKIE_LINE_RE.match(stripped)
-        if m: 
-            cookie_dict[m.group('name')] = m.group('value')
-            
-    # Format the cookie dictionary into standard HTTP header format (key1=value1; key2=value2;)
-    http_cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Cookie": http_cookie_str, 
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
+def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> dict:
+    """နောက်ကွယ်မှ Browser ဖြင့် TV Code ကို Auto ရိုက်ထည့်ပေးမည့် စနစ်"""
+    playwright_cookies = []
     
-    try:
-        if service == "netflix":
-            res = requests.post("https://www.netflix.com/api/shakti/tv8/activation", json={"code": tv_code}, headers=headers, timeout=15)
-        elif service == "hbo":
-            res = requests.post("https://oauth.max.com/device/activate", json={"user_code": tv_code}, headers=headers, timeout=15)
-        elif service == "prime":
-            res = requests.post("https://www.amazon.com/a/c/action/device/auth", data={"code": tv_code}, headers=headers, timeout=15)
-        elif service == "crunchyroll":
-            res = requests.post("https://www.crunchyroll.com/activate/api", json={"device_code": tv_code}, headers=headers, timeout=15)
-        elif service == "spotify":
-            res = requests.post("https://accounts.spotify.com/api/device/activate", json={"code": tv_code}, headers=headers, timeout=15)
-        else:
-            return {"ok": False, "msg": "Service မသိပါ"}
-
-        if res.status_code in [200, 201, 204]:
-            return {"ok": True, "msg": f"✅ {service.upper()} TV ချိတ်ဆက်မှု အောင်မြင်ပါသည်။ မျက်နှာပြင်ကို ကြည့်ပါ။"}
-        else:
-            return {"ok": False, "msg": f"❌ Code မှားနေသည် သို့မဟုတ် Cookie အလုပ်မလုပ်ပါ။ (Status: {res.status_code})"}
+    for line in cookie_text.splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
             
-    except requests.exceptions.RequestException as e:
-        return {"ok": False, "msg": f"⚠️ Server ချိတ်ဆက်မှု Error: {str(e)}"}
+        m = COOKIE_LINE_RE.match(line)
+        if m:
+            playwright_cookies.append({
+                "name": m.group('name'),
+                "value": m.group('value'),
+                "domain": m.group('domain'),
+                "path": m.group('path')
+            })
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=['--no-sandbox', '--disable-setuid-sandbox'])
+            context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            
+            context.add_cookies(playwright_cookies)
+            page = context.new_page()
+
+            if service == "netflix":
+                page.goto("https://www.netflix.com/tv8", timeout=60000)
+                page.wait_for_load_state("networkidle")
+                page.keyboard.type(tv_code, delay=200)
+                page.keyboard.press("Enter")
+                time.sleep(5)
+                
+            elif service == "hbo":
+                page.goto("https://auth.max.com/device/activate", timeout=60000)
+                page.wait_for_load_state("networkidle")
+                page.keyboard.type(tv_code, delay=200)
+                page.keyboard.press("Enter")
+                time.sleep(5)
+                
+            elif service == "prime":
+                page.goto("https://www.amazon.com/a/c/action/device/auth", timeout=60000)
+                page.wait_for_load_state("networkidle")
+                page.keyboard.type(tv_code, delay=200)
+                page.keyboard.press("Enter")
+                time.sleep(5)
+                
+            elif service == "crunchyroll":
+                page.goto("https://www.crunchyroll.com/activate", timeout=60000)
+                page.wait_for_load_state("networkidle")
+                page.keyboard.type(tv_code, delay=200)
+                page.keyboard.press("Enter")
+                time.sleep(5)
+                
+            elif service == "spotify":
+                page.goto("https://www.spotify.com/us/pair/", timeout=60000)
+                page.wait_for_load_state("networkidle")
+                page.keyboard.type(tv_code, delay=200)
+                page.keyboard.press("Enter")
+                time.sleep(5)
+                
+            else:
+                browser.close()
+                return {"ok": False, "msg": "Service မသိပါ"}
+
+            browser.close()
+            return {
+                "ok": True, 
+                "msg": f"✅ <b>{service.upper()}</b> TV အတွက် Code <code>{tv_code}</code> ချိတ်ဆက်မှု လုပ်ဆောင်ပြီးပါပြီ။\n\n(TV မျက်နှာပြင်ကို စောင့်ကြည့်ပေးပါ)"
+            }
+            
+    except PlaywrightTimeoutError:
+        return {"ok": False, "msg": "⚠️ Browser ချိတ်ဆက်မှု အချိန်ကြာလွန်းနေပါသည်။ (Timeout)"}
+    except Exception as e:
+        return {"ok": False, "msg": f"⚠️ Browser Automation Error: {str(e)}"}
 
 # ==========================================
 # KEYBOARDS & MENUS
@@ -416,17 +465,18 @@ def submit_tv_code_to_api(service: str, tv_code: str, cookie_text: str) -> dict:
 
 def get_join_channel_keyboard():
     markup = types.InlineKeyboardMarkup()
-    url = f"https://t.me/{FORCE_JOIN_CHANNEL.replace('@', '')}"
-    markup.add(types.InlineKeyboardButton("📢 Channel သို့ Join မည်", url=url))
-    markup.add(types.InlineKeyboardButton("🔄 ကျွန်တော် Join ပြီးပါပြီ (စစ်ဆေးရန်)", callback_data="check_joined"))
+    markup.add(
+        types.InlineKeyboardButton("📢 Channel သို့ Join မည်", url=f"https://t.me/{FORCE_JOIN_CHANNEL.replace('@', '')}")
+    )
+    markup.add(
+        types.InlineKeyboardButton("🔄 ကျွန်တော် Join ပြီးပါပြီ (စစ်ဆေးရန်)", callback_data="check_joined")
+    )
     return markup
 
 def get_main_menu(user_id=None):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     
-    # Netflix login link ယူရန် ခလုတ်ကို အကြီးဆုံးဖြစ်အောင် တစ်လိုင်းတည်း ထားရှိပါသည်
     markup.add(types.KeyboardButton("Netflix login link ယူရန်"))
-    
     markup.add(types.KeyboardButton(TV_LOGIN_BTN), types.KeyboardButton("ကျွန်ုပ်၏ Quota 📊"))
     markup.add(types.KeyboardButton("လက်ကျန်စာရင်း 📋"), types.KeyboardButton("/start 🔄"))
     
@@ -441,11 +491,11 @@ def get_tv_login_keyboard():
     markup = types.InlineKeyboardMarkup()
     
     markup.row(
-        types.InlineKeyboardButton("📺 Netflix TV Login", callback_data="tv_netflix"),
+        types.InlineKeyboardButton("📺 Netflix TV Login", callback_data="tv_netflix"), 
         types.InlineKeyboardButton("🟣 HBO TV Login", callback_data="tv_hbo")
     )
     markup.row(
-        types.InlineKeyboardButton("📺 Prime Video TV", callback_data="tv_prime"),
+        types.InlineKeyboardButton("📺 Prime Video TV", callback_data="tv_prime"), 
         types.InlineKeyboardButton("🍥 Crunchyroll TV", callback_data="tv_crunchyroll")
     )
     markup.row(
@@ -459,17 +509,19 @@ def get_tv_login_keyboard():
 
 def admin_panel_keyboard():
     kb = types.InlineKeyboardMarkup(row_width=2)
+    
     kb.add(
-        types.InlineKeyboardButton("➕ Add VIP", callback_data="panel_add_vip"),
+        types.InlineKeyboardButton("➕ Add VIP", callback_data="panel_add_vip"), 
         types.InlineKeyboardButton("➖ Remove VIP", callback_data="panel_rm_vip"),
-        types.InlineKeyboardButton("🌟 VIP List", callback_data="panel_list_vip"),
+        types.InlineKeyboardButton("🌟 VIP List", callback_data="panel_list_vip"), 
         types.InlineKeyboardButton("🚫 Ban User", callback_data="panel_ban"),
-        types.InlineKeyboardButton("✅ Unban User", callback_data="panel_unban"),
+        types.InlineKeyboardButton("✅ Unban User", callback_data="panel_unban"), 
         types.InlineKeyboardButton("📜 Banned List", callback_data="panel_list_banned"),
-        types.InlineKeyboardButton("👥 All Users", callback_data="panel_list_users"),
+        types.InlineKeyboardButton("👥 All Users", callback_data="panel_list_users"), 
         types.InlineKeyboardButton("🗑 Clear Cookie Pool", callback_data="panel_clear"),
         types.InlineKeyboardButton("📢 Broadcast", callback_data="panel_broadcast"),
     )
+    
     return kb
 
 # ==========================================
@@ -479,38 +531,37 @@ def admin_panel_keyboard():
 @bot.message_handler(commands=['open'])
 def open_bot(message):
     global bot_is_open
-    if not is_admin(message.from_user.id): 
+    if not is_admin(message.from_user.id):
         return
         
     bot_is_open = True
     try:
         supabase.table('bot_settings').upsert({'key': 'bot_status', 'value': 'open'}).execute()
     except Exception as e:
-        logger.error(f"Open Bot Error: {e}")
+        logger.error(f"Open bot error: {e}")
         
-    bot.reply_to(message, "✅ <b>Bot ကို ဖွင့်လိုက်ပါပြီ။</b>\nအသုံးပြုသူများ ပုံမှန်အတိုင်း ပြန်လည်အသုံးပြုနိုင်ပါပြီ။", parse_mode="HTML")
+    bot.reply_to(message, "✅ <b>Bot ကို ဖွင့်လိုက်ပါပြီ။</b>", parse_mode="HTML")
 
 @bot.message_handler(commands=['close'])
 def close_bot(message):
     global bot_is_open
-    if not is_admin(message.from_user.id): 
+    if not is_admin(message.from_user.id):
         return
         
     bot_is_open = False
     try:
         supabase.table('bot_settings').upsert({'key': 'bot_status', 'value': 'closed'}).execute()
     except Exception as e:
-        logger.error(f"Close Bot Error: {e}")
+        logger.error(f"Close bot error: {e}")
         
-    bot.reply_to(message, "🛑 <b>Bot ကို ပိတ်လိုက်ပါပြီ (Maintenance)။</b>\nအသုံးပြုသူများ ခေတ္တအသုံးပြုခွင့် ရပ်ဆိုင်းသွားပါမည်။", parse_mode="HTML")
+    bot.reply_to(message, "🛑 <b>Bot ကို ပိတ်လိုက်ပါပြီ (Maintenance)။</b>", parse_mode="HTML")
 
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome_and_menu(message):
     if is_banned(message.chat.id):
-        bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
         
-    if not check_bot_open(message): 
+    if not check_bot_open(message):
         return
         
     log_user(message)
@@ -534,17 +585,16 @@ def send_welcome_and_menu(message):
 def handle_tv_commands(message):
     user_id = message.from_user.id
     
-    if is_banned(user_id): 
+    if is_banned(user_id):
         return
         
-    if not check_bot_open(message): 
+    if not check_bot_open(message):
         return
     
-    # 📌 QUOTA CHECK (TV Login အတွက်ပါ)
     limit_val = get_daily_limit()
     user_limit = 999999 if (is_admin(user_id) or is_vip(user_id)) else limit_val
     used = get_quota(str(user_id), current_date())
-
+    
     if used >= user_limit:
         bot.reply_to(message, f"🚫 ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{limit_val}</b> ခု ပြည့်သွားပြီကွ။", parse_mode="HTML")
         return
@@ -566,10 +616,14 @@ def handle_tv_commands(message):
     }
     service = service_map.get(cmd)
     
-    progress = bot.reply_to(message, f"⏳ {service.upper()} Code <code>{tv_code}</code> ကို စစ်ဆေးနေပါသည်...", parse_mode="HTML")
+    progress = bot.reply_to(
+        message, 
+        f"⏳ Browser ဖွင့်၍ {service.upper()} သို့ ချိတ်ဆက်နေပါသည်... (စက္ကန့်အနည်းငယ် ကြာနိုင်ပါသည်)", 
+        parse_mode="HTML"
+    )
     
     def process_tv_login():
-        acquired = file_lock.acquire(timeout=60)
+        acquired = file_lock.acquire(timeout=120)
         if not acquired:
             bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text="⚠️ Server အလုပ်များနေပါသည်။ ခဏနေမှ ထပ်စမ်းပါ။")
             return
@@ -577,23 +631,36 @@ def handle_tv_commands(message):
         try:
             res = supabase.table('cookies').select('id, content').eq('service_type', service).limit(1).execute()
             if not res.data:
-                bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=f"❌ {service.upper()} အတွက် Cookie လက်ကျန်မရှိတော့ပါ။ Admin ကို အကြောင်းကြားပေးပါ။")
+                bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=f"❌ {service.upper()} အတွက် Cookie လက်ကျန်မရှိတော့ပါ။")
                 return
                 
             cookie_id = res.data[0]['id']
             cookie_content = res.data[0]['content']
             
-            result = submit_tv_code_to_api(service, tv_code, cookie_content)
+            result = submit_tv_code_playwright(service, tv_code, cookie_content)
             
             if result["ok"]:
                 supabase.table('cookies').delete().eq('id', cookie_id).execute()
                 new_used = increment_quota(str(user_id), current_date())
                 
-                quota_info = "👑 <b>VIP/Admin Account</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ Quota <b>{new_used}/{limit_val}</b> ခု သုံးထားသည်"
-                bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=f"{result['msg']}\n\n{quota_info}", parse_mode="HTML")
+                if is_admin(user_id) or is_vip(user_id):
+                    quota_info = "👑 <b>VIP/Admin Account</b>"
+                else:
+                    quota_info = f"ယနေ့ Quota <b>{new_used}/{limit_val}</b> ခု သုံးထားသည်"
+                    
+                bot.edit_message_text(
+                    chat_id=message.chat.id, 
+                    message_id=progress.message_id, 
+                    text=f"{result['msg']}\n\n{quota_info}", 
+                    parse_mode="HTML"
+                )
                 send_log_to_channel(message.from_user, f"{service.upper()} TV ချိတ်ဆက်မှု အောင်မြင်ပါသည်။")
             else:
-                bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=result["msg"])
+                bot.edit_message_text(
+                    chat_id=message.chat.id, 
+                    message_id=progress.message_id, 
+                    text=result["msg"]
+                )
                 
         except Exception as e:
             bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=f"⚠️ Error: {e}")
@@ -613,10 +680,9 @@ def handle_menu_buttons(message):
     text = message.text
 
     if is_banned(user_id):
-        bot.send_message(chat_id, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
-
-    if not check_bot_open(message): 
+        
+    if not check_bot_open(message):
         return
         
     log_user(message)
@@ -624,7 +690,7 @@ def handle_menu_buttons(message):
     if not is_user_subscribed(user_id):
         bot.send_message(
             chat_id, 
-            "✦ <b>ချန်နယ် Join ရန် လိုအပ်ပါသည်</b>\n\nBot ကို ဆက်လက်အသုံးပြုရန် အောက်ပါချန်နယ်သို့ အရင်ဆုံး Join ပေးပါ။", 
+            "✦ <b>ချန်နယ် Join ရန် လိုအပ်ပါသည်</b>", 
             reply_markup=get_join_channel_keyboard(), 
             parse_mode="HTML"
         )
@@ -632,19 +698,31 @@ def handle_menu_buttons(message):
 
     if text == "ကျွန်ုပ်၏ Quota 📊":
         if is_admin(user_id) or is_vip(user_id):
-            bot.send_message(chat_id, "👑 သင်ဟာ Admin/VIP ဖြစ်တဲ့အတွက် Quota အကန့်အသတ်မရှိ (Unlimited) သုံးနိုင်ပါတယ်။")
+            bot.send_message(chat_id, "👑 Admin/VIP (Unlimited)")
         else:
             limit_val = get_daily_limit()
             used = get_quota(str(user_id), current_date())
             remaining = max(0, limit_val - used)
-            bot.send_message(chat_id, f"ဒီနေ့ Quota: <b>{used}/{limit_val}</b> ခု သုံးထားတယ် — <b>{remaining}</b> ခု ကျန်ပါသေးတယ်ကွ", parse_mode="HTML")
+            bot.send_message(
+                chat_id, 
+                f"ဒီနေ့ Quota: <b>{used}/{limit_val}</b> သုံးထားတယ် — <b>{remaining}</b> ကျန်ပါသေးတယ်", 
+                parse_mode="HTML"
+            )
             
     elif text == "လက်ကျန်စာရင်း 📋":
-        available_pool = get_available_cookies_count()
-        bot.send_message(chat_id, f"📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\nစုစုပေါင်း Cookie: <b>{available_pool}</b> ခု", parse_mode="HTML")
+        available_cookies = get_available_cookies_count()
+        bot.send_message(
+            chat_id, 
+            f"📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\nစုစုပေါင်း Cookie: <b>{available_cookies}</b> ခု", 
+            parse_mode="HTML"
+        )
 
     elif text == "🌟 Get VIP 🌟":
-        bot.send_message(chat_id, "🌟 VIP အကောင့်ရယူရန် ဆက်သွယ်ပါ 👉 https://t.me/Ren2512", disable_web_page_preview=True)
+        bot.send_message(
+            chat_id, 
+            "🌟 VIP အကောင့်ရယူရန် ဆက်သွယ်ပါ 👉 https://t.me/Ren2512", 
+            disable_web_page_preview=True
+        )
         
     elif text == TV_LOGIN_BTN:
         bot.send_message(
@@ -660,7 +738,11 @@ def handle_menu_buttons(message):
         used = get_quota(str(user_id), current_date())
         
         if used >= user_limit:
-            bot.send_message(chat_id, f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{limit_val}</b> ခု ပြည့်သွားပြီကွ။", parse_mode="HTML")
+            bot.send_message(
+                chat_id, 
+                f"ဒီနေ့အတွက် သတ်မှတ်ထားတဲ့ <b>{limit_val}</b> ခု ပြည့်သွားပြီကွ။", 
+                parse_mode="HTML"
+            )
             return
 
         def process_claim_task():
@@ -668,24 +750,24 @@ def handle_menu_buttons(message):
             if not acquired:
                 bot.send_message(chat_id, "ငါအလုပ်များနေပါတယ်ဟ၊ ခဏနေမှ ထပ်ကြိုးစားပေး")
                 return
-
+                
             wait_msg = bot.send_message(chat_id, "⏳ Cookie ကို စစ်ဆေးပြီး Token ထုတ်နေပါပြီ ခဏစောင့်ကွာ...")
+            
             try:
                 clean_url = None
                 while True:
                     res = supabase.table('cookies').select('id, content').or_('service_type.eq.netflix,service_type.is.null').limit(1).execute()
                     if not res.data:
                         break
-
+                        
                     cookie_id = res.data[0]['id']
-                    content_text = res.data[0]['content']
-                    content_bytes = content_text.encode('utf-8')
-
+                    content_bytes = res.data[0]['content'].encode('utf-8')
+                    
                     supabase.table('cookies').delete().eq('id', cookie_id).execute()
-
+                    
                     if not check_cookie_active(content_bytes):
                         continue
-
+                        
                     url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
                     if url_result:
                         clean_url = url_result
@@ -693,38 +775,46 @@ def handle_menu_buttons(message):
 
                 if clean_url:
                     new_used = increment_quota(str(user_id), current_date())
-                    quota_info = "👑 <b>VIP/Admin Account</b>" if (is_admin(user_id) or is_vip(user_id)) else f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ"
                     
+                    if is_admin(user_id) or is_vip(user_id):
+                        quota_info = "👑 <b>VIP/Admin</b>"
+                    else:
+                        quota_info = f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ"
+                        
                     bot.edit_message_text(
                         chat_id=chat_id, 
-                        message_id=wait_msg.message_id,
-                        text=(f"ရပြီဝေ့:\n\n{clean_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}"),
+                        message_id=wait_msg.message_id, 
+                        text=f"ရပြီဝေ့:\n\n{clean_url}\n\n⚠️ <b>သတိထား</b> - ဒီလင့်ခ်က 15 minutes လောက်ပဲရမှာနော်\n\n{quota_info}", 
                         disable_web_page_preview=True, 
                         parse_mode="HTML"
                     )
                     send_log_to_channel(message.from_user, "Netflix Token Link ထုတ်ယူသွားပါသည်။")
                 else:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="လောလောဆယ် အဆင်ပြေသော Cookie များ ကုန်နေပါသည်ကွာ။")
-                    
+                    bot.edit_message_text(
+                        chat_id=chat_id, 
+                        message_id=wait_msg.message_id, 
+                        text="လောလောဆယ် အဆင်ပြေသော Cookie များ ကုန်နေပါသည်ကွာ။"
+                    )
             except Exception as e:
-                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error တက်ကုန်ပြီဟ: {e}")
+                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error: {e}")
             finally:
                 file_lock.release()
 
         Thread(target=process_claim_task).start()
 
     elif text == "ZIP ဖိုင် တင်ရန် 📤":
-        if not is_admin(user_id): 
+        if not is_admin(user_id):
             return
-        
+            
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("Netflix", callback_data="zip_netflix"),
+            types.InlineKeyboardButton("Netflix", callback_data="zip_netflix"), 
             types.InlineKeyboardButton("HBO", callback_data="zip_hbo"),
-            types.InlineKeyboardButton("Prime Video", callback_data="zip_prime"),
+            types.InlineKeyboardButton("Prime Video", callback_data="zip_prime"), 
             types.InlineKeyboardButton("Crunchyroll", callback_data="zip_crunchyroll"),
             types.InlineKeyboardButton("Spotify", callback_data="zip_spotify")
         )
+        
         bot.send_message(
             chat_id, 
             "📦 <b>ဘယ် Service အတွက် Cookie တွေ တင်မှာလဲ?</b>\nအောက်ကနေ အရင်ရွေးချယ်ပေးပါ:", 
@@ -733,57 +823,15 @@ def handle_menu_buttons(message):
         )
 
     elif text == "Admin Panel ⚙️":
-        if not is_admin(user_id): 
+        if not is_admin(user_id):
             return
-        bot.send_message(chat_id, "⚙️ <b>Admin Management Panel</b>", reply_markup=admin_panel_keyboard(), parse_mode="HTML")
-
-# ==========================================
-# ADMIN NEXT STEP HANDLERS
-# ==========================================
-
-def process_add_vip(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
-        return
-    uid = message.text.strip()
-    vip_users.add(uid)
-    try: 
-        supabase.table('vip_users').upsert({'user_id': uid}).execute()
-    except Exception as e: 
-        logger.error(f"Add VIP Error: {e}")
-    bot.send_message(message.chat.id, f"🌟 User ID <code>{uid}</code> ကို VIP အဖြစ် သတ်မှတ်လိုက်ပါပြီ။", parse_mode="HTML")
-
-def process_rm_vip(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
-        return
-    uid = message.text.strip()
-    vip_users.discard(uid)
-    try: 
-        supabase.table('vip_users').delete().eq('user_id', uid).execute()
-    except Exception as e: 
-        logger.error(f"Remove VIP Error: {e}")
-    bot.send_message(message.chat.id, f"❌ User ID <code>{uid}</code> ကို VIP မှ ပယ်ဖျက်လိုက်ပါပြီ။", parse_mode="HTML")
-
-def process_ban(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
-        return
-    uid = message.text.strip()
-    banned_users.add(uid)
-    try: 
-        supabase.table('banned_users').upsert({'user_id': uid}).execute()
-    except Exception as e: 
-        logger.error(f"Ban Error: {e}")
-    bot.send_message(message.chat.id, f"🚫 User ID <code>{uid}</code> ကို Block လိုက်ပါပြီ။", parse_mode="HTML")
-
-def process_unban(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
-        return
-    uid = message.text.strip()
-    banned_users.discard(uid)
-    try: 
-        supabase.table('banned_users').delete().eq('user_id', uid).execute()
-    except Exception as e: 
-        logger.error(f"Unban Error: {e}")
-    bot.send_message(message.chat.id, f"✅ User ID <code>{uid}</code> ကို Unblock လုပ်ပေးလိုက်ပါပြီ။", parse_mode="HTML")
+            
+        bot.send_message(
+            chat_id, 
+            "⚙️ <b>Admin Management Panel</b>", 
+            reply_markup=admin_panel_keyboard(), 
+            parse_mode="HTML"
+        )
 
 # ==========================================
 # CALLBACK QUERIES
@@ -791,22 +839,25 @@ def process_unban(message):
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callback(call: types.CallbackQuery) -> None:
-    if call.from_user is None or call.message is None: 
+    if call.from_user is None or call.message is None:
         return
         
     user_id = call.from_user.id
     chat_id = call.message.chat.id
     
-    if is_banned(user_id): 
+    if is_banned(user_id):
         return
 
-    # ZIP Upload Service Selection
+    # ZIP Upload Handling
     if call.data.startswith("zip_"):
-        if not is_admin(user_id): 
+        if not is_admin(user_id):
             return
+            
         svc = call.data.split("_")[1]
+        
         with _pending_lock:
             _pending_upload_admins[user_id] = svc
+            
         bot.edit_message_text(
             chat_id=chat_id, 
             message_id=call.message.message_id, 
@@ -815,7 +866,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
         )
         return
 
-    # TV Login Button Instructions
+    # TV Login Menus
     if call.data.startswith("tv_"):
         bot.answer_callback_query(call.id)
         
@@ -838,22 +889,26 @@ def handle_callback(call: types.CallbackQuery) -> None:
         )
         return
 
-    # Channel Join Check
+    # Channel Check
     if call.data == "check_joined":
         if is_user_subscribed(user_id):
-            bot.answer_callback_query(call.id, "✅ အောင်မြင်ပါသည်။ ကြိုဆိုပါတယ်။")
+            bot.answer_callback_query(call.id, "✅ အောင်မြင်ပါသည်။")
             bot.delete_message(chat_id, call.message.message_id)
-            bot.send_message(chat_id, "မင်္ဂလာပါ ဝေ့ - အောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး အသုံးပြုနိုင်ပါပြီ", reply_markup=get_main_menu(user_id))
-        else: 
+            bot.send_message(
+                chat_id, 
+                "မင်္ဂလာပါ ဝေ့ - အောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး အသုံးပြုနိုင်ပါပြီ", 
+                reply_markup=get_main_menu(user_id)
+            )
+        else:
             bot.answer_callback_query(call.id, "⚠️ သင်သည် Channel သို့ အရင်ဆုံး Join ရန် လိုအပ်ပါသည်။", show_alert=True)
         return
 
     bot.answer_callback_query(call.id)
     
-    # Admin Panel Callbacks
-    if not is_admin(user_id): 
+    if not is_admin(user_id):
         return
-
+    
+    # Admin Panels functions
     if call.data == "panel_add_vip":
         msg = bot.send_message(chat_id, "🌟 VIP ID ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
         bot.register_next_step_handler(msg, process_add_vip)
@@ -887,11 +942,46 @@ def handle_callback(call: types.CallbackQuery) -> None:
             
     elif call.data == "panel_broadcast":
         awaiting_broadcast[str(chat_id)] = True
-        bot.send_message(
-            chat_id, 
-            "📢 Broadcast စာသားကို ရိုက်ပို့ပါ။", 
-            reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add(BROADCAST_CANCEL_BTN)
-        )
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(BROADCAST_CANCEL_BTN)
+        bot.send_message(chat_id, "📢 Broadcast စာသားကို ရိုက်ပို့ပါ။", reply_markup=markup)
+
+
+def process_add_vip(message):
+    uid = message.text.strip()
+    vip_users.add(uid)
+    try:
+        supabase.table('vip_users').upsert({'user_id': uid}).execute()
+        bot.send_message(message.chat.id, f"🌟 {uid} VIP သတ်မှတ်ပြီးပါပြီ")
+    except Exception as e:
+        logger.error(f"VIP add error: {e}")
+
+def process_rm_vip(message):
+    uid = message.text.strip()
+    vip_users.discard(uid)
+    try:
+        supabase.table('vip_users').delete().eq('user_id', uid).execute()
+        bot.send_message(message.chat.id, f"❌ {uid} VIP ဖြုတ်ပြီးပါပြီ")
+    except Exception as e:
+        logger.error(f"VIP remove error: {e}")
+
+def process_ban(message):
+    uid = message.text.strip()
+    banned_users.add(uid)
+    try:
+        supabase.table('banned_users').upsert({'user_id': uid}).execute()
+        bot.send_message(message.chat.id, f"🚫 {uid} Block ပြီးပါပြီ")
+    except Exception as e:
+        logger.error(f"Ban error: {e}")
+
+def process_unban(message):
+    uid = message.text.strip()
+    banned_users.discard(uid)
+    try:
+        supabase.table('banned_users').delete().eq('user_id', uid).execute()
+        bot.send_message(message.chat.id, f"✅ {uid} Unblock ပြီးပါပြီ")
+    except Exception as e:
+        logger.error(f"Unban error: {e}")
 
 # ==========================================
 # FILE UPLOAD HANDLERS
@@ -899,12 +989,12 @@ def handle_callback(call: types.CallbackQuery) -> None:
 
 @bot.message_handler(content_types=["document"])
 def process_document_merged(message: types.Message):
-    if message.from_user is None or message.document is None: 
+    if message.from_user is None or message.document is None:
         return
         
     user_id = message.chat.id
     
-    if is_banned(user_id) or not check_bot_open(message): 
+    if is_banned(user_id) or not check_bot_open(message):
         return
         
     if not is_user_subscribed(message.from_user.id):
@@ -919,7 +1009,6 @@ def process_document_merged(message: types.Message):
     with _pending_lock:
         svc_type = _pending_upload_admins.get(user_id)
 
-    # 📌 Admin ZIP Upload Handling
     if svc_type and is_admin(user_id):
         document = message.document
         
@@ -932,85 +1021,94 @@ def process_document_merged(message: types.Message):
         try:
             file_info = bot.get_file(document.file_id)
             raw_data = bot.download_file(file_info.file_path)
-                
+            
             cookies_to_insert = []
             with zip_lib.ZipFile(io.BytesIO(raw_data)) as z:
                 for file_info_z in z.infolist():
                     if file_info_z.filename.lower().endswith('.txt') and not file_info_z.is_dir():
                         content = z.read(file_info_z.filename).decode('utf-8', errors='ignore')
-                        cookies_to_insert.append({'content': content, 'service_type': svc_type})
-
+                        cookies_to_insert.append({
+                            'content': content, 
+                            'service_type': svc_type
+                        })
+                        
             for i in range(0, len(cookies_to_insert), 500):
                 supabase.table('cookies').insert(cookies_to_insert[i:i + 500]).execute()
-
-            with _pending_lock: 
+                
+            with _pending_lock:
                 _pending_upload_admins.pop(user_id, None)
                 
             bot.edit_message_text(
                 chat_id=user_id, 
-                message_id=progress.message_id,
-                text=(f"✅ <b>ZIP ဖိုင် Supabase ထဲသို့ ဖြေပြီးပါပြီ။ ({svc_type.upper()})</b>\n\n▪️ ယခုထည့်သွင်းလိုက်သော Cookie အရေအတွက်: <b>{len(cookies_to_insert)}</b> ခု"),
+                message_id=progress.message_id, 
+                text=f"✅ <b>ZIP ဖိုင် ဖြေပြီးပါပြီ။ ({svc_type.upper()})</b>\n\n▪️ ထည့်သွင်းလိုက်သော အရေအတွက်: <b>{len(cookies_to_insert)}</b> ခု", 
                 parse_mode="HTML"
             )
         except Exception as e:
             bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error: {e}")
         return
 
-    # 📌 Normal User .txt Upload Handling 
-    file_name = message.document.file_name.lower()
-    if not file_name.endswith('.txt'):
-        bot.reply_to(message, "⚠️ ကျေးဇူးပြု၍ .txt ဖိုင် သို့မဟုတ် ZIP တင်ခလုတ်ကို အသုံးပြုပါ။", reply_markup=get_main_menu(message.from_user.id))
+    if not message.document.file_name.lower().endswith('.txt'):
+        bot.reply_to(
+            message, 
+            "⚠️ ကျေးဇူးပြု၍ .txt ဖိုင် သို့မဟုတ် ZIP တင်ခလုတ်ကို အသုံးပြုပါ။", 
+            reply_markup=get_main_menu(message.from_user.id)
+        )
         return
 
     progress_msg = bot.reply_to(message, "ဖိုင်ငါရပြီ - အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
-
+    
     def document_task():
         try:
             file_info = bot.get_file(message.document.file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            run_generator_task(message.chat.id, message.from_user, downloaded_file, progress_msg.message_id)
+            file_data = bot.download_file(file_info.file_path)
+            run_generator_task(message.chat.id, message.from_user, file_data, progress_msg.message_id)
         except Exception as e:
             bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text=f"Error: {e}")
-
+            
     Thread(target=document_task).start()
-
 
 @bot.message_handler(content_types=['text'])
 def handle_text_merged(message: types.Message):
     if message.from_user is None or message.text.startswith('/'):
-        # 📌 /cancel command (Zip တင်မည့် အခြေအနေကို ဖျက်ရန်)
         if message.text.lower() == '/cancel' and is_admin(message.chat.id):
             with _pending_lock:
                 if message.chat.id in _pending_upload_admins:
                     _pending_upload_admins.pop(message.chat.id)
-                    bot.reply_to(message, "❌ ZIP တင်ခြင်းကို ပယ်ဖျက်လိုက်ပါပြီ။", reply_markup=get_main_menu(message.chat.id))
+                    bot.reply_to(
+                        message, 
+                        "❌ ZIP တင်ခြင်းကို ပယ်ဖျက်လိုက်ပါပြီ။", 
+                        reply_markup=get_main_menu(message.chat.id)
+                    )
             return
         return
 
-    if message.text in [BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in [BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS:
         return
-
+        
     chat_id = message.chat.id
-    user_id = str(chat_id)
+    user_id = str(message.chat.id)
     
-    if is_banned(user_id) or not check_bot_open(message): 
+    if is_banned(user_id) or not check_bot_open(message):
         return
     
-    # 📌 Broadcast Text Handling
     if chat_id == ADMIN_ID and awaiting_broadcast.get(user_id):
         awaiting_broadcast[user_id] = False
         sent = 0
         for uid in active_users.keys():
             if uid not in banned_users:
-                try: 
+                try:
                     bot.send_message(int(uid), message.text)
                     sent += 1
-                except Exception: 
+                except Exception:
                     pass
-        bot.send_message(chat_id, f"📢 Broadcast ပို့ပြီးပါပြီ။ အောင်မြင်: {sent}", reply_markup=get_main_menu(chat_id))
+        bot.send_message(
+            chat_id, 
+            f"📢 Broadcast ပို့ပြီးပါပြီ။ အောင်မြင်: {sent}", 
+            reply_markup=get_main_menu(chat_id)
+        )
         return
 
-    # 📌 User raw cookie text sending logic (For Normal Token Gen)
     progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
     
     def text_task():
@@ -1023,11 +1121,15 @@ def handle_text_merged(message: types.Message):
 # ==========================================
 
 @app.route('/')
-def alive(): 
+def alive():
     return "Bot is running online and awake!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     load_cached_data()
-    Thread(target=lambda: app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000))), daemon=True).start()
+    Thread(target=run_web, daemon=True).start()
     logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
