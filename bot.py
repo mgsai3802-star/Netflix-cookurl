@@ -474,7 +474,8 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
     except PlaywrightTimeoutError:
         return {"ok": False, "msg": "⚠️ Browser ချိတ်ဆက်မှု အချိန်ကြာလွန်းနေပါသည်။ (Timeout)"}
     except Exception as e:
-        return {"ok": False, "msg": f"⚠️ Browser Automation Error: {html.escape(str(e)}"}
+        # 📌 ဤနေရာတွင် ဂွင်းပိတ်အမှားကို ပြင်ဆင်ပြီးဖြစ်သည်
+        return {"ok": False, "msg": f"⚠️ Browser Automation Error: {html.escape(str(e))}"}
 
 # ==========================================
 # KEYBOARDS & MENUS
