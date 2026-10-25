@@ -367,17 +367,21 @@ def get_join_channel_keyboard():
 
 def get_main_menu(user_id=None):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(types.KeyboardButton("Netflix login link ယူရန်"), types.KeyboardButton(TV_LOGIN_BTN))
-    markup.add(types.KeyboardButton("ကျွန်ုပ်၏ Quota 📊"), types.KeyboardButton("လက်ကျန်စာရင်း 📋"))
+    
+    # 🌟 Netflix ခလုတ်ကို အပေါ်ဆုံးမှာ တစ်လိုင်းတည်း (အကြီးဆုံး/အကျယ်ဆုံး) ထားခြင်း
+    markup.add(types.KeyboardButton("Netflix login link ယူရန်"))
+    
+    # ကျန်တဲ့ခလုတ်များကို အောက်တွင် ၂ ခု တစ်တန်းစီ ထားခြင်း
+    markup.add(types.KeyboardButton(TV_LOGIN_BTN), types.KeyboardButton("ကျွန်ုပ်၏ Quota 📊"))
+    markup.add(types.KeyboardButton("လက်ကျန်စာရင်း 📋"), types.KeyboardButton("/start 🔄"))
     
     if user_id and is_admin(user_id):
         markup.add(types.KeyboardButton("ZIP ဖိုင် တင်ရန် 📤"), types.KeyboardButton("Admin Panel ⚙️"))
     elif user_id and not is_admin(user_id):
         markup.add(types.KeyboardButton("🌟 Get VIP 🌟"))
         
-    markup.add(types.KeyboardButton("/start 🔄"))
-    # (ဟိုးစတော့ ခလုတ် အပြီးဖြုတ်လိုက်ပါပြီ)
     return markup
+
 
 def get_tv_login_keyboard():
     markup = types.InlineKeyboardMarkup()
