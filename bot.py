@@ -391,19 +391,33 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
     """နောက်ကွယ်မှ Browser ဖြင့် TV Code ကို Auto ရိုက်ထည့်ပေးမည့် စနစ်"""
     playwright_cookies = []
     
-    for line in cookie_text.splitlines():
+        for line in cookie_text.splitlines():
         line = line.strip()
         if not line or line.startswith('#'):
             continue
             
         m = COOKIE_LINE_RE.match(line)
         if m:
+            domain = m.group('domain')
+            # 📌 Spotify အတွက်ဆိုရင် spotify.com ပါမှ ထည့်မည် (Error မတက်အောင် ကာကွယ်ရန်)
+            if service == "spotify" and "spotify.com" not in domain:
+                continue
+            elif service == "netflix" and "netflix.com" not in domain:
+                continue
+            elif service == "hbo" and "max.com" not in domain and "hbo" not in domain:
+                continue
+            elif service == "prime" and "amazon.com" not in domain:
+                continue
+            elif service == "crunchyroll" and "crunchyroll.com" not in domain:
+                continue
+
             playwright_cookies.append({
                 "name": m.group('name'),
                 "value": m.group('value'),
-                "domain": m.group('domain'),
+                "domain": domain,
                 "path": m.group('path')
             })
+
 
     try:
         with sync_playwright() as p:
