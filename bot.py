@@ -368,11 +368,26 @@ def run_generator_task(chat_id, user, content_bytes, progress_msg_id=None):
 # ==========================================
 
 def submit_tv_code_to_api(service: str, tv_code: str, cookie_text: str) -> dict:
+    """Netscape format cookie မှ HTTP Header cookie string သို့ ပြောင်းလဲခြင်း"""
+    cookie_dict = {}
+    for line in cookie_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'): 
+            continue
+        m = COOKIE_LINE_RE.match(stripped)
+        if m: 
+            cookie_dict[m.group('name')] = m.group('value')
+            
+    # Format the cookie dictionary into standard HTTP header format (key1=value1; key2=value2;)
+    http_cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Cookie": cookie_text, 
-        "Content-Type": "application/json"
+        "Cookie": http_cookie_str, 
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
+    
     try:
         if service == "netflix":
             res = requests.post("https://www.netflix.com/api/shakti/tv8/activation", json={"code": tv_code}, headers=headers, timeout=15)
