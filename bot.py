@@ -48,7 +48,7 @@ banned_users: set[str] = set()
 vip_users: set[str] = set()
 bot_is_open = True
 
-DEFAULT_DAILY_LIMIT = int(os.getenv("DAILY_LIMIT", "10"))
+DEFAULT_DAILY_LIMIT = int(os.getenv("DAILY_LIMIT", "3"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
 
 def configured_timezone() -> ZoneInfo:
@@ -66,10 +66,12 @@ app = Flask(__name__)
 
 file_lock = threading.Lock()
 running_process = {}
+stop_flags = {}
 awaiting_broadcast = {}
 _pending_upload_admins: dict[int, str] = {}
 _pending_lock = threading.Lock()
 
+STOP_BTN = "⏹ ဟိုးစတော့"
 TV_LOGIN_BTN = "📺 TV Login"
 BROADCAST_CANCEL_BTN = "❌ Broadcast ပယ်ဖျက်"
 
@@ -147,7 +149,7 @@ def increment_quota(uid: str, date_str: str) -> int:
 
 def get_available_cookies_count() -> int:
     try:
-        # 📌 မူလစနစ်အတိုင်း netflix နှင့် tag မပါသော (null) cookie များကိုသာ ရေတွက်ရန်
+        # 📌 Netflix သီးသန့် Cookie အရေအတွက်ကိုသာ တွက်ချက်ပါမည်
         res = supabase.table('cookies').select('id', count='exact').or_('service_type.eq.netflix,service_type.is.null').execute()
         if res.count:
             return res.count
@@ -300,10 +302,10 @@ def check_cookie_active(content_bytes: bytes) -> bool:
         url_lower = res.url.lower()
         text_lower = res.text.lower()
         
-        if any(k in url_lower for k in ["youraccount", "signup"]):
+        if any(k in url_lower for k in ["youraccount", "signup", "finishsignup"]):
             return False
             
-        if any(k in text_lower for k in ["restart your membership", "finish sign up", "step 1 of"]):
+        if any(k in text_lower for k in ["restart your membership", "finish sign up", "finish your sign-up", "step 1 of"]):
             return False
             
         return True
@@ -312,7 +314,8 @@ def check_cookie_active(content_bytes: bytes) -> bool:
         return False
 
 def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
-    input_path = f"input_{user_id}_{datetime.now().timestamp()}.txt"
+    # 📌 ပြိုင်တူ Generate လုပ်ရာတွင် Error မတက်စေရန် lock ထဲတွင်သာ အလုပ်လုပ်ပါသည်
+    input_path = "input.txt" 
     try:
         fixed_content = normalize_cookie_text(content_bytes)
         with open(input_path, "wb") as f:
@@ -388,6 +391,7 @@ def run_generator_task(chat_id, user, content_bytes, progress_msg_id=None):
 # ==========================================
 
 def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> dict:
+    """နောက်ကွယ်မှ Browser ဖြင့် TV Code ကို Auto ရိုက်ထည့်ပေးမည့် စနစ်"""
     playwright_cookies = []
     
     for line in cookie_text.splitlines():
@@ -399,7 +403,7 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
         if m:
             domain = m.group('domain')
             
-            # 📌 TV Login အတွက် Cookie များကို စစ်ထုတ်ခြင်း
+            # 📌 Filter cookies to prevent invalid domain protocol errors
             if service == "netflix" and not ("netflix" in domain):
                 continue
             elif service == "hbo" and not ("max" in domain or "hbo" in domain):
@@ -489,14 +493,15 @@ def get_main_menu(user_id=None):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     
     markup.add(types.KeyboardButton("Netflix login link ယူရန်"))
-    markup.add(types.KeyboardButton(TV_LOGIN_BTN), types.KeyboardButton("ကျွန်ုပ်၏ Quota 📊"))
-    markup.add(types.KeyboardButton("လက်ကျန်စာရင်း 📋"), types.KeyboardButton("/start 🔄"))
+    markup.add(types.KeyboardButton("ကျွန်ုပ်၏ Quota 📊"), types.KeyboardButton("လက်ကျန်စာရင်း 📋"))
     
     if user_id and is_admin(user_id):
         markup.add(types.KeyboardButton("ZIP ဖိုင် တင်ရန် 📤"), types.KeyboardButton("Admin Panel ⚙️"))
     elif user_id and not is_admin(user_id):
         markup.add(types.KeyboardButton("🌟 Get VIP 🌟"))
         
+    markup.add(types.KeyboardButton(TV_LOGIN_BTN), types.KeyboardButton(STOP_BTN))
+    markup.add(types.KeyboardButton("/start 🔄"))
     return markup
 
 def get_tv_login_keyboard():
@@ -568,6 +573,7 @@ def close_bot(message):
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome_and_menu(message):
     if is_banned(message.chat.id):
+        bot.reply_to(message, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
         
     if not check_bot_open(message):
@@ -585,14 +591,15 @@ def send_welcome_and_menu(message):
         )
         return
         
+    # 📌 နှုတ်ဆက်စာသား အသစ်
     welcome_text = (
-        "👋 <b>မင်္ဂလာပါ ဝေ့... Ren Digital Service မှ ကြိုဆိုပါတယ်</b>\n\n"
-        "ဒီ Bot လေးကနေ အောက်ပါ ဝန်ဆောင်မှုတွေကို အလွယ်တကူ ရယူနိုင်ပါပြီ-\n\n"
+        "👋 <b>မင်္ဂလာပါ ဝေ့... </b>\n\n"
+        "အောက်ပါ ဝန်ဆောင်မှုတွေကို အလွယ်တကူ ရယူနိုင်ပါပြီ-\n\n"
         "📺 <b>TV Login Services (Auto Connect)</b>\n"
         "▪️ Netflix, HBO Max, Prime Video, Crunchyroll စတဲ့ TV Code တွေကို ပို့ပေးရုံနဲ့ အလိုအလျောက် ချိတ်ဆက်ပေးပါမယ်။\n\n"
         "🔗 <b>Netflix Cookie to URL Link</b>\n"
         "▪️ အသင့်သုံး Netflix Cookie ကနေ 15 မိနစ်ခံ Token Link ကို 'Netflix login link ယူရန်' ခလုတ်နှိပ်ပြီး ထုတ်ယူနိုင်ပါတယ်။\n"
-        "▪️ (သို့) ကိုယ်ပိုင် Cookie `.txt` ဖိုင်/စာသား များကို Bot ဆီ တိုက်ရိုက်ပေးပို့ပြီးလည်း လင့်ခ်ပြောင်းလဲနိုင်ပါတယ်။\n\n"
+        "▪️ (သို့) ကိုယ်ပိုင် Cookie <code>.txt</code> ဖိုင်/စာသား များကို Bot ဆီ တိုက်ရိုက်ပေးပို့ပြီးလည်း လင့်ခ်ပြောင်းလဲနိုင်ပါတယ်။\n\n"
         "အောက်ပါ Menu ခလုတ်များကို နှိပ်၍ စတင် အသုံးပြုနိုင်ပါပြီ 👇"
     )
         
@@ -602,6 +609,21 @@ def send_welcome_and_menu(message):
         reply_markup=get_main_menu(message.from_user.id),
         parse_mode="HTML"
     )
+
+@bot.message_handler(func=lambda message: message.text == "/start 🔄")
+def refresh_bot(message):
+    send_welcome_and_menu(message)
+
+@bot.message_handler(func=lambda message: message.text == STOP_BTN)
+def stop_process(message):
+    user_id = str(message.chat.id)
+    proc = running_process.get(user_id)
+    if proc and proc.poll() is None:
+        stop_flags[user_id] = True
+        proc.terminate()
+        bot.reply_to(message, "⏹ မလုပ်ပေးတော့ဘူးကွာ", reply_markup=get_main_menu(message.from_user.id))
+    else:
+        bot.reply_to(message, "ဘာပို့ထားလို့ ရပ်ခိုင်းနေတာလဲဟ", reply_markup=get_main_menu(message.from_user.id))
 
 @bot.message_handler(commands=['ntv', 'hbotv', 'pvtv', 'crtv'])
 def handle_tv_commands(message):
@@ -782,10 +804,10 @@ def handle_menu_buttons(message):
             try:
                 clean_url = None
                 attempts = 0
-                max_attempts = 5 # 📌 Cookie အပျက်တွေချည်း ၅ ခါဆက်တိုက်ကြုံမှ ရပ်ပါမည်
+                max_attempts = 3 # 📌 အများဆုံး ၃ ခါပဲ ဆက်တိုက်စစ်ပါမည်
                 
                 while attempts < max_attempts:
-                    # 📌 မူလ Database Query အတိုင်း အတိအကျ ပြန်လည်ပြင်ဆင်ထားပါသည် (Cookie အဟောင်းများ ပြန်အလုပ်လုပ်ပါမည်)
+                    # 📌 တခြား TV Cookie များ မရောစေရန် Netflix (သို့) အဟောင်း (Null) များကိုသာ ဆွဲထုတ်ပါမည်
                     res = supabase.table('cookies').select('id, content').or_('service_type.eq.netflix,service_type.is.null').limit(1).execute()
                     if not res.data:
                         break
@@ -808,7 +830,7 @@ def handle_menu_buttons(message):
                     new_used = increment_quota(str(user_id), current_date())
                     
                     if is_admin(user_id) or is_vip(user_id):
-                        quota_info = "👑 <b>VIP/Admin</b>"
+                        quota_info = "👑 <b>VIP/Admin Account</b>"
                     else:
                         quota_info = f"ယနေ့ <b>{new_used}/{limit_val}</b> ခု သုံးထားတယ်ကွာ"
                         
@@ -824,7 +846,7 @@ def handle_menu_buttons(message):
                     bot.edit_message_text(
                         chat_id=chat_id, 
                         message_id=wait_msg.message_id, 
-                        text="⚠️ <b>Cookie သက်တမ်းကုန်နေပါသည်။</b>\n\nစစ်ဆေးခဲ့သော Cookie များမှာ အလုပ်မလုပ်ပါ။ 'Netflix login link ယူရန်' ကို ထပ်နှိပ်ပြီး နောက်ထပ် Cookie များကို ဆက်စမ်းကြည့်ပေးပါ။",
+                        text="⚠️ <b>Cookie သက်တမ်းကုန်နေပါသည်။</b>\n\nစစ်ဆေးခဲ့သော Cookie (၃) ခုမှာ အလုပ်မလုပ်ပါ။ အကုန်ပျောက်သွားခြင်းမှ ကာကွယ်ရန် ခေတ္တရပ်ထားပါသည်။\n\n'Netflix login link ယူရန်' ကို ထပ်နှိပ်ပြီး နောက်ထပ် Cookie များကို ဆက်စမ်းကြည့်ပါ။",
                         parse_mode="HTML"
                     )
                 else:
@@ -875,7 +897,7 @@ def handle_menu_buttons(message):
 # ==========================================
 
 def process_add_vip(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN, STOP_BTN] or message.text in MENU_BUTTONS: 
         return
     uid = message.text.strip()
     vip_users.add(uid)
@@ -886,7 +908,7 @@ def process_add_vip(message):
     bot.send_message(message.chat.id, f"🌟 User ID <code>{html.escape(uid)}</code> ကို VIP အဖြစ် သတ်မှတ်လိုက်ပါပြီ။", parse_mode="HTML")
 
 def process_rm_vip(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN, STOP_BTN] or message.text in MENU_BUTTONS: 
         return
     uid = message.text.strip()
     vip_users.discard(uid)
@@ -897,7 +919,7 @@ def process_rm_vip(message):
     bot.send_message(message.chat.id, f"❌ User ID <code>{html.escape(uid)}</code> ကို VIP မှ ပယ်ဖျက်လိုက်ပါပြီ။", parse_mode="HTML")
 
 def process_ban(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN, STOP_BTN] or message.text in MENU_BUTTONS: 
         return
     uid = message.text.strip()
     banned_users.add(uid)
@@ -908,7 +930,7 @@ def process_ban(message):
     bot.send_message(message.chat.id, f"🚫 User ID <code>{html.escape(uid)}</code> ကို Block လိုက်ပါပြီ။", parse_mode="HTML")
 
 def process_unban(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN, STOP_BTN] or message.text in MENU_BUTTONS: 
         return
     uid = message.text.strip()
     banned_users.discard(uid)
@@ -1040,6 +1062,7 @@ def process_document_merged(message: types.Message):
         return
         
     user_id = message.chat.id
+    str_user_id = str(user_id)
     
     if is_banned(user_id) or not check_bot_open(message):
         return
@@ -1095,6 +1118,7 @@ def process_document_merged(message: types.Message):
             bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error: {html.escape(str(e))}")
         return
 
+    stop_flags[str_user_id] = False
     if not message.document.file_name.lower().endswith('.txt'):
         bot.reply_to(
             message, 
@@ -1130,7 +1154,7 @@ def handle_text_merged(message: types.Message):
             return
         return
 
-    if message.text in [BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS:
+    if message.text in [BROADCAST_CANCEL_BTN, STOP_BTN] or message.text in MENU_BUTTONS:
         return
         
     chat_id = message.chat.id
@@ -1156,6 +1180,7 @@ def handle_text_merged(message: types.Message):
         )
         return
 
+    stop_flags[user_id] = False
     progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
     
     def text_task():
