@@ -399,16 +399,16 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
         if m:
             domain = m.group('domain')
             
-            # 📌 Filter cookies to prevent invalid domain protocol errors (Spotify/HBO fix)
-            if service == "spotify" and "spotify.com" not in domain:
+            # 📌 Filter cookies to prevent invalid domain protocol errors
+            if service == "spotify" and not ("spotify" in domain):
                 continue
-            elif service == "netflix" and "netflix.com" not in domain:
+            elif service == "netflix" and not ("netflix" in domain):
                 continue
-            elif service == "hbo" and "max.com" not in domain and "hbo" not in domain:
+            elif service == "hbo" and not ("max" in domain or "hbo" in domain):
                 continue
-            elif service == "prime" and "amazon.com" not in domain:
+            elif service == "prime" and not ("amazon" in domain or "prime" in domain):
                 continue
-            elif service == "crunchyroll" and "crunchyroll.com" not in domain:
+            elif service == "crunchyroll" and not ("crunchyroll" in domain):
                 continue
 
             playwright_cookies.append({
@@ -429,37 +429,42 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
             if service == "netflix":
                 page.goto("https://www.netflix.com/tv8", timeout=60000)
                 page.wait_for_load_state("networkidle")
-                page.keyboard.type(tv_code, delay=200)
+                page.wait_for_timeout(1500)
+                page.keyboard.type(tv_code, delay=150)
                 page.keyboard.press("Enter")
-                time.sleep(5)
+                page.wait_for_timeout(4000)
                 
             elif service == "hbo":
                 page.goto("https://auth.max.com/device/activate", timeout=60000)
                 page.wait_for_load_state("networkidle")
-                page.keyboard.type(tv_code, delay=200)
+                page.wait_for_timeout(1500)
+                page.keyboard.type(tv_code, delay=150)
                 page.keyboard.press("Enter")
-                time.sleep(5)
+                page.wait_for_timeout(4000)
                 
             elif service == "prime":
                 page.goto("https://www.amazon.com/a/c/action/device/auth", timeout=60000)
                 page.wait_for_load_state("networkidle")
-                page.keyboard.type(tv_code, delay=200)
+                page.wait_for_timeout(1500)
+                page.keyboard.type(tv_code, delay=150)
                 page.keyboard.press("Enter")
-                time.sleep(5)
+                page.wait_for_timeout(4000)
                 
             elif service == "crunchyroll":
                 page.goto("https://www.crunchyroll.com/activate", timeout=60000)
                 page.wait_for_load_state("networkidle")
-                page.keyboard.type(tv_code, delay=200)
+                page.wait_for_timeout(2000) # Crunchyroll needs a bit more wait time
+                page.keyboard.type(tv_code, delay=150)
                 page.keyboard.press("Enter")
-                time.sleep(5)
+                page.wait_for_timeout(4000)
                 
             elif service == "spotify":
                 page.goto("https://www.spotify.com/us/pair/", timeout=60000)
                 page.wait_for_load_state("networkidle")
-                page.keyboard.type(tv_code, delay=200)
+                page.wait_for_timeout(2000) # Spotify might need a bit more time to render inputs
+                page.keyboard.type(tv_code, delay=150)
                 page.keyboard.press("Enter")
-                time.sleep(5)
+                page.wait_for_timeout(4000)
                 
             else:
                 browser.close()
@@ -474,7 +479,6 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
     except PlaywrightTimeoutError:
         return {"ok": False, "msg": "⚠️ Browser ချိတ်ဆက်မှု အချိန်ကြာလွန်းနေပါသည်။ (Timeout)"}
     except Exception as e:
-        # 📌 ဤနေရာတွင် ဂွင်းပိတ်အမှားကို ပြင်ဆင်ပြီးဖြစ်သည်
         return {"ok": False, "msg": f"⚠️ Browser Automation Error: {html.escape(str(e))}"}
 
 # ==========================================
@@ -636,9 +640,10 @@ def handle_tv_commands(message):
     }
     service = service_map.get(cmd)
     
+    # 📌 ဤနေရာတွင် 'Browser ဖွင့်၍' စာသားကို ဖြုတ်လိုက်ပါပြီ။
     progress = bot.reply_to(
         message, 
-        f"⏳ Browser ဖွင့်၍ {service.upper()} သို့ ချိတ်ဆက်နေပါသည်... (စက္ကန့်အနည်းငယ် ကြာနိုင်ပါသည်)", 
+        f"⏳ {service.upper()} သို့ ချိတ်ဆက်နေပါသည်... (စက္ကန့်အနည်းငယ် ကြာနိုင်ပါသည်)", 
         parse_mode="HTML"
     )
     
