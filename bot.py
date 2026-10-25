@@ -66,12 +66,10 @@ app = Flask(__name__)
 
 file_lock = threading.Lock()
 running_process = {}
-awaiting_broadcast = {}
 _pending_upload_admins: dict[int, str] = {}
 _pending_lock = threading.Lock()
 
 TV_LOGIN_BTN = "📺 TV Login"
-BROADCAST_CANCEL_BTN = "❌ Broadcast ပယ်ဖျက်"
 
 MENU_BUTTONS = [
     "Netflix login link ယူရန်", 
@@ -583,23 +581,27 @@ def send_welcome_and_menu(message):
         )
         return
         
+    # 📌 အစ်ကိုတောင်းဆိုထားသော Intro စာသားအသစ်
     welcome_text = (
         "👋 မင်္ဂလာပါ ဝေ့... \n\n"
         "အောက်ပါ ဝန်ဆောင်မှုတွေကို အလွယ်တကူ ရယူနိုင်ပါပြီ-\n\n"
-        "📺 <b>TV Login Services (Auto Connect)</b>\n"
+        "📺 TV Login Services (Auto Connect)\n"
         "▪️ Netflix, HBO Max, Prime Video, Crunchyroll စတဲ့ TV Code တွေကို ပို့ပေးရုံနဲ့ အလိုအလျောက် ချိတ်ဆက်ပေးပါမယ်။\n\n"
-        "🔗 <b>Netflix Cookie to URL Link</b>\n"
+        "🔗 Netflix Cookie to URL Link\n"
         "▪️ အသင့်သုံး Netflix Cookie ကနေ 15 မိနစ်ခံ Token Link ကို 'Netflix login link ယူရန်' ခလုတ်နှိပ်ပြီး ထုတ်ယူနိုင်ပါတယ်။\n"
-        "▪️ (သို့) ကိုယ်ပိုင် Cookie <code>.txt</code> ဖိုင်/စာသား များကို Bot ဆီ တိုက်ရိုက်ပေးပို့ပြီးလည်း လင့်ခ်ပြောင်းလဲနိုင်ပါတယ်။\n\n"
+        "▪️ (သို့) ကိုယ်ပိုင် Cookie .txt ဖိုင်/စာသား များကို Bot ဆီ တိုက်ရိုက်ပေးပို့ပြီးလည်း လင့်ခ်ပြောင်းလဲနိုင်ပါတယ်။\n\n"
         "အောက်ပါ Menu ခလုတ်များကို နှိပ်၍ စတင် အသုံးပြုနိုင်ပါပြီ 👇"
     )
         
     bot.reply_to(
         message, 
         welcome_text, 
-        reply_markup=get_main_menu(message.from_user.id),
-        parse_mode="HTML"
+        reply_markup=get_main_menu(message.from_user.id)
     )
+
+@bot.message_handler(func=lambda message: message.text == "/start 🔄")
+def refresh_bot(message):
+    send_welcome_and_menu(message)
 
 @bot.message_handler(commands=['ntv', 'hbotv', 'pvtv', 'crtv'])
 def handle_tv_commands(message):
@@ -872,7 +874,7 @@ def handle_menu_buttons(message):
 # ==========================================
 
 def process_add_vip(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", "/cancel"] or message.text in MENU_BUTTONS: 
         return
     uid = message.text.strip()
     vip_users.add(uid)
@@ -883,7 +885,7 @@ def process_add_vip(message):
     bot.send_message(message.chat.id, f"🌟 User ID <code>{html.escape(uid)}</code> ကို VIP အဖြစ် သတ်မှတ်လိုက်ပါပြီ။", parse_mode="HTML")
 
 def process_rm_vip(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", "/cancel"] or message.text in MENU_BUTTONS: 
         return
     uid = message.text.strip()
     vip_users.discard(uid)
@@ -894,7 +896,7 @@ def process_rm_vip(message):
     bot.send_message(message.chat.id, f"❌ User ID <code>{html.escape(uid)}</code> ကို VIP မှ ပယ်ဖျက်လိုက်ပါပြီ။", parse_mode="HTML")
 
 def process_ban(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", "/cancel"] or message.text in MENU_BUTTONS: 
         return
     uid = message.text.strip()
     banned_users.add(uid)
@@ -905,7 +907,7 @@ def process_ban(message):
     bot.send_message(message.chat.id, f"🚫 User ID <code>{html.escape(uid)}</code> ကို Block လိုက်ပါပြီ။", parse_mode="HTML")
 
 def process_unban(message):
-    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+    if message.text in ["/start 🔄", "/cancel"] or message.text in MENU_BUTTONS: 
         return
     uid = message.text.strip()
     banned_users.discard(uid)
@@ -914,6 +916,22 @@ def process_unban(message):
     except Exception as e: 
         logger.error(f"Unban Error: {e}")
     bot.send_message(message.chat.id, f"✅ User ID <code>{html.escape(uid)}</code> ကို Unblock လုပ်ပေးလိုက်ပါပြီ။", parse_mode="HTML")
+
+def process_broadcast(message):
+    if message.text in ["/start 🔄", "/cancel"] or message.text in MENU_BUTTONS: 
+        bot.send_message(message.chat.id, "❌ Broadcast ပယ်ဖျက်လိုက်ပါပြီ။")
+        return
+        
+    sent = 0
+    for uid in active_users.keys():
+        if uid not in banned_users:
+            try: 
+                bot.send_message(int(uid), message.text)
+                sent += 1
+            except Exception: 
+                pass
+                
+    bot.send_message(message.chat.id, f"📢 Broadcast ပို့ပြီးပါပြီ။ အောင်မြင်: {sent}")
 
 # ==========================================
 # CALLBACK QUERIES
@@ -989,30 +1007,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
     if not is_admin(user_id):
         return
     
-    # 📌 ဤနေရာတွင် User များလွန်းပါက Error မတက်စေရန် Chunk ခွဲ၍ပို့ပေးသောစနစ် ထည့်ထားပါသည်
-    if call.data == "panel_list_users":
-        if not active_users:
-            bot.send_message(chat_id, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
-        else:
-            lines = [f"👥 <b>စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး</b>\n"]
-            for uid, uname in active_users.items():
-                status = ""
-                if uid in banned_users: status = " (🚫 Blocked)"
-                elif uid in vip_users: status = " (🌟 VIP)"
-                safe_uname = html.escape(uname)
-                lines.append(f"▪️ {safe_uname} (ID: <code>{uid}</code>){status}")
-
-            msg_text = ""
-            for line in lines:
-                if len(msg_text) + len(line) > 4000:
-                    bot.send_message(chat_id, msg_text, parse_mode="HTML")
-                    msg_text = ""
-                msg_text += line + "\n"
-            
-            if msg_text:
-                bot.send_message(chat_id, msg_text, parse_mode="HTML")
-        return
-
+    # Admin Panels functions
     if call.data == "panel_add_vip":
         msg = bot.send_message(chat_id, "🌟 VIP ID ကို ရိုက်ထည့်ပါ:", parse_mode="HTML")
         bot.register_next_step_handler(msg, process_add_vip)
@@ -1037,6 +1032,32 @@ def handle_callback(call: types.CallbackQuery) -> None:
         banned_list_str = "\n".join(banned_users) if banned_users else "မရှိပါ"
         bot.send_message(chat_id, f"🚫 Block ထားသော User များ:\n\n{html.escape(banned_list_str)}")
         
+    elif call.data == "panel_list_users":
+        # 📌 User တွေများလို့ Error 400 မတက်အောင် အပိုင်းခွဲပြီး ပို့ပေးပါမည်
+        if not active_users:
+            bot.send_message(chat_id, "လက်ရှိတွင် အသုံးပြုသူ စာရင်း မရှိသေးပါ။")
+        else:
+            chunks = []
+            text = f"👥 <b>စုစုပေါင်း အသုံးပြုသူ: {len(active_users)} ဦး</b>\n\n"
+            for uid, uname in active_users.items():
+                status = ""
+                if uid in banned_users: status = " (🚫 Blocked)"
+                elif uid in vip_users: status = " (🌟 VIP)"
+                
+                line = f"▪️ {html.escape(uname)} (ID: <code>{uid}</code>){status}\n"
+                
+                if len(text) + len(line) > 3900:
+                    chunks.append(text)
+                    text = line
+                else:
+                    text += line
+                    
+            if text:
+                chunks.append(text)
+                
+            for chunk in chunks:
+                bot.send_message(chat_id, chunk, parse_mode="HTML")
+        
     elif call.data == "panel_clear":
         try:
             supabase.table('cookies').delete().gt('id', -1).execute()
@@ -1045,10 +1066,9 @@ def handle_callback(call: types.CallbackQuery) -> None:
             bot.send_message(chat_id, f"Error clearing cookies: {html.escape(str(e))}")
             
     elif call.data == "panel_broadcast":
-        awaiting_broadcast[str(chat_id)] = True
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add(BROADCAST_CANCEL_BTN)
-        bot.send_message(chat_id, "📢 Broadcast စာသားကို ရိုက်ပို့ပါ။", reply_markup=markup)
+        # 📌 ပိုမိုတည်ငြိမ်သော Next Step Handler စနစ်သို့ ပြောင်းလဲထားပါသည်
+        msg = bot.send_message(chat_id, "📢 Broadcast စာသားကို ရိုက်ပို့ပါ။ (ပယ်ဖျက်လိုပါက /cancel ဟု ရိုက်ပါ)")
+        bot.register_next_step_handler(msg, process_broadcast)
 
 # ==========================================
 # FILE UPLOAD HANDLERS
@@ -1150,36 +1170,13 @@ def handle_text_merged(message: types.Message):
             return
         return
 
-    if message.text in [BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS:
+    if message.text in MENU_BUTTONS:
         return
         
     chat_id = message.chat.id
     user_id = str(message.chat.id)
     
     if is_banned(user_id) or not check_bot_open(message):
-        return
-    
-    # 📌 ဤနေရာတွင် Broadcast ကို Background Thread ဖြင့် ပြောင်းလဲရေးသားထားပါသည် (API လင့်မဖြစ်အောင်)
-    if is_admin(chat_id) and awaiting_broadcast.get(user_id):
-        awaiting_broadcast[user_id] = False
-        broadcast_text = message.text
-        
-        bot.send_message(chat_id, "📢 Broadcast စတင်ပို့ဆောင်နေပါပြီ။ ပြီးစီးပါက အကြောင်းကြားပေးပါမည်။", reply_markup=get_main_menu(chat_id))
-        
-        def send_broadcast():
-            sent = 0
-            failed = 0
-            for uid in list(active_users.keys()):
-                if uid not in banned_users:
-                    try:
-                        bot.send_message(int(uid), broadcast_text)
-                        sent += 1
-                        time.sleep(0.05) # Prevent Telegram API rate limit errors
-                    except Exception:
-                        failed += 1
-            bot.send_message(chat_id, f"📢 Broadcast ပို့ပြီးပါပြီ။\n✅ အောင်မြင်: {sent} ဦး\n❌ မအောင်မြင်: {failed} ဦး")
-            
-        Thread(target=send_broadcast).start()
         return
 
     progress_msg = bot.reply_to(message, "စာသားရပြီ အစဉ်လိုက်ပဲသွားမယ်ကွ(Queue)...")
