@@ -66,6 +66,7 @@ app = Flask(__name__)
 
 file_lock = threading.Lock()
 running_process = {}
+stop_flags = {}
 awaiting_broadcast = {}
 _pending_upload_admins: dict[int, str] = {}
 _pending_lock = threading.Lock()
@@ -86,6 +87,21 @@ COOKIE_LINE_RE = re.compile(
     r'^(?P<domain>\S+)\s+(?P<flag1>TRUE|FALSE)\s+(?P<path>/\S*?)\s*(?=TRUE|FALSE)'
     r'(?P<secure>TRUE|FALSE)\s+(?P<expiry>\d+)\s+(?P<name>\S+)\s+(?P<value>.*)$'
 )
+
+# ==========================================
+# RENDER KEEP-AWAKE (ANTI-SLEEP THREAD)
+# ==========================================
+
+def keep_awake():
+    """Render free tier မအိပ်စေရန် ၁၄ မိနစ်တစ်ခါ Self-ping လုပ်ပေးမည့် စနစ်"""
+    url = os.environ.get("RENDER_EXTERNAL_URL", f"http://127.0.0.1:{os.environ.get('PORT', 10000)}")
+    while True:
+        time.sleep(14 * 60) # 14 Minutes
+        try:
+            requests.get(url, timeout=10)
+            logger.info("Pinged self to stay awake.")
+        except Exception:
+            pass
 
 # ==========================================
 # SUPABASE & HELPER FUNCTIONS
@@ -144,15 +160,23 @@ def increment_quota(uid: str, date_str: str) -> int:
         logger.error(f"Increment quota error: {e}")
     return new_count
 
-def get_available_cookies_count() -> int:
+def get_all_cookies_stats() -> dict:
+    stats = {"netflix": 0, "hbo": 0, "prime": 0, "crunchyroll": 0}
     try:
-        res = supabase.table('cookies').select('id', count='exact').or_('service_type.eq.netflix,service_type.is.null').execute()
-        if res.count:
-            return res.count
-        return 0
+        r_nf = supabase.table('cookies').select('id', count='exact').or_('service_type.eq.netflix,service_type.is.null').execute()
+        stats["netflix"] = r_nf.count if r_nf.count else 0
+        
+        r_hbo = supabase.table('cookies').select('id', count='exact').eq('service_type', 'hbo').execute()
+        stats["hbo"] = r_hbo.count if r_hbo.count else 0
+        
+        r_prime = supabase.table('cookies').select('id', count='exact').eq('service_type', 'prime').execute()
+        stats["prime"] = r_prime.count if r_prime.count else 0
+        
+        r_cr = supabase.table('cookies').select('id', count='exact').eq('service_type', 'crunchyroll').execute()
+        stats["crunchyroll"] = r_cr.count if r_cr.count else 0
     except Exception as e:
-        logger.error(f"Get cookies count error: {e}")
-        return 0
+        logger.error(f"Stats count error: {e}")
+    return stats
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -257,7 +281,6 @@ def normalize_cookie_text(raw_bytes: bytes) -> bytes:
 
 
 def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
-    # 📌 Token generator script must use "input.txt". Locked securely by file_lock.
     input_path = "input.txt"
     try:
         fixed_content = normalize_cookie_text(content_bytes)
@@ -273,7 +296,7 @@ def execute_token_generation(content_bytes: bytes, user_id: str, chat_id: int):
         running_process[user_id] = proc
         
         try:
-            stdout, stderr = proc.communicate(timeout=60) # Reduced timeout for speed
+            stdout, stderr = proc.communicate(timeout=60)
         except subprocess.TimeoutExpired:
             proc.kill()
             stdout, stderr = proc.communicate()
@@ -303,7 +326,6 @@ def run_generator_task(chat_id, user, content_bytes, progress_msg_id=None):
         if progress_msg_id:
             bot.edit_message_text(chat_id=chat_id, message_id=progress_msg_id, text="Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ...")
             
-        # 📌 check_cookie_active ဖြုတ်လိုက်ပါပြီ။ generator ကို တိုက်ရိုက်ခေါ်ပါမည်။
         clean_url = execute_token_generation(content_bytes, str(user.id), chat_id)
         
         if clean_url:
@@ -469,6 +491,18 @@ def admin_panel_keyboard():
     )
     
     return kb
+
+def get_clear_cookie_keyboard():
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("Netflix", callback_data="clear_netflix"),
+        types.InlineKeyboardButton("HBO", callback_data="clear_hbo"),
+        types.InlineKeyboardButton("Prime", callback_data="clear_prime"),
+        types.InlineKeyboardButton("Crunchyroll", callback_data="clear_crunchyroll"),
+        types.InlineKeyboardButton("💥 All Cookies", callback_data="clear_all"),
+        types.InlineKeyboardButton("❌ Cancel", callback_data="clear_cancel")
+    )
+    return markup
 
 # ==========================================
 # COMMAND HANDLERS
@@ -676,12 +710,15 @@ def handle_menu_buttons(message):
             )
             
     elif text == "လက်ကျန်စာရင်း 📋":
-        available_cookies = get_available_cookies_count()
-        bot.send_message(
-            chat_id, 
-            f"📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\nNetflix Token သီးသန့် အသင့်ရှိသော Cookie: <b>{available_cookies}</b> ခု", 
-            parse_mode="HTML"
+        stats = get_all_cookies_stats()
+        msg_text = (
+            "📋 <b>လက်ကျန်စာရင်း အခြေအနေ</b>\n\n"
+            f"📺 Netflix: <b>{stats['netflix']}</b> ခု\n"
+            f"🟣 HBO Max: <b>{stats['hbo']}</b> ခု\n"
+            f"📺 Prime Video: <b>{stats['prime']}</b> ခု\n"
+            f"🍥 Crunchyroll: <b>{stats['crunchyroll']}</b> ခု"
         )
+        bot.send_message(chat_id, msg_text, parse_mode="HTML")
 
     elif text == "🌟 Get VIP 🌟":
         bot.send_message(
@@ -735,7 +772,6 @@ def handle_menu_buttons(message):
                     supabase.table('cookies').delete().eq('id', cookie_id).execute()
                     attempts += 1
                     
-                    # 📌 Error မတက်တော့ဘဲ တိုက်ရိုက် generate လုပ်ပါမည်
                     url_result = execute_token_generation(content_bytes, str(user_id), chat_id)
                     if url_result:
                         clean_url = url_result
@@ -855,21 +891,6 @@ def process_unban(message):
         logger.error(f"Unban Error: {e}")
     bot.send_message(message.chat.id, f"✅ User ID <code>{html.escape(uid)}</code> ကို Unblock လုပ်ပေးလိုက်ပါပြီ။", parse_mode="HTML")
 
-def process_broadcast(message):
-    if message.text in ["/start 🔄", "/cancel", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
-        bot.send_message(message.chat.id, "❌ Broadcast ပယ်ဖျက်လိုက်ပါပြီ။")
-        return
-        
-    sent = 0
-    for uid in active_users.keys():
-        if uid not in banned_users:
-            try: 
-                bot.send_message(int(uid), message.text)
-                sent += 1
-            except Exception: 
-                pass
-                
-    bot.send_message(message.chat.id, f"📢 Broadcast ပို့ပြီးပါပြီ။ အောင်မြင်: {sent}")
 
 # ==========================================
 # CALLBACK QUERIES
@@ -902,6 +923,28 @@ def handle_callback(call: types.CallbackQuery) -> None:
             text=f"📦 <b>{svc.upper()}</b> အတွက် `.zip` ဖိုင်ကို ပို့ပေးပါ။\n(မတင်လိုပါက /cancel ဟု ရိုက်ထည့်ပါ)", 
             parse_mode="HTML"
         )
+        return
+
+    # Clear Cookie Menu Handling
+    if call.data.startswith("clear_"):
+        if not is_admin(user_id):
+            return
+        svc = call.data.split("_")[1]
+        try:
+            if svc == "cancel":
+                bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="❌ ရှင်းလင်းခြင်းကို ပယ်ဖျက်လိုက်ပါပြီ။")
+                return
+            elif svc == "all":
+                supabase.table('cookies').delete().gt('id', -1).execute()
+                bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🗑 <b>Cookie များ အားလုံး ရှင်းလင်းပြီးပါပြီ။</b>", parse_mode="HTML")
+            elif svc == "netflix":
+                supabase.table('cookies').delete().or_('service_type.eq.netflix,service_type.is.null').execute()
+                bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text="🗑 <b>Netflix Cookie များ ရှင်းလင်းပြီးပါပြီ။</b>", parse_mode="HTML")
+            else:
+                supabase.table('cookies').delete().eq('service_type', svc).execute()
+                bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=f"🗑 <b>{svc.upper()} Cookie များ ရှင်းလင်းပြီးပါပြီ။</b>", parse_mode="HTML")
+        except Exception as e:
+            bot.send_message(chat_id, f"Error clearing cookies: {html.escape(str(e))}")
         return
 
     # TV Login Menus
@@ -996,15 +1039,17 @@ def handle_callback(call: types.CallbackQuery) -> None:
                 bot.send_message(chat_id, chunk, parse_mode="HTML")
         
     elif call.data == "panel_clear":
-        try:
-            supabase.table('cookies').delete().gt('id', -1).execute()
-            bot.send_message(chat_id, "🗑 Cookie အဟောင်းများ အားလုံး ရှင်းလင်းပြီးပါပြီ။")
-        except Exception as e:
-            bot.send_message(chat_id, f"Error clearing cookies: {html.escape(str(e))}")
+        bot.edit_message_text(
+            chat_id=chat_id, 
+            message_id=call.message.message_id, 
+            text="🗑 <b>မည်သည့် Service ၏ Cookie များကို ရှင်းလင်းမည်နည်း?</b>", 
+            reply_markup=get_clear_cookie_keyboard(), 
+            parse_mode="HTML"
+        )
             
     elif call.data == "panel_broadcast":
-        msg = bot.send_message(chat_id, "📢 Broadcast စာသားကို ရိုက်ပို့ပါ။ (ပယ်ဖျက်လိုပါက /cancel ဟု ရိုက်ပါ)")
-        bot.register_next_step_handler(msg, process_broadcast)
+        awaiting_broadcast[user_id] = True
+        bot.send_message(chat_id, "📢 Broadcast စာသားကို ရိုက်ပို့ပါ။ (ပယ်ဖျက်လိုပါက /cancel ဟု ရိုက်ပါ)")
 
 # ==========================================
 # FILE UPLOAD HANDLERS
@@ -1103,6 +1148,9 @@ def handle_text_merged(message: types.Message):
                         "❌ ZIP တင်ခြင်းကို ပယ်ဖျက်လိုက်ပါပြီ။", 
                         reply_markup=get_main_menu(message.chat.id)
                     )
+                elif message.chat.id in awaiting_broadcast:
+                    awaiting_broadcast[message.chat.id] = False
+                    bot.reply_to(message, "❌ Broadcast ပယ်ဖျက်လိုက်ပါပြီ။")
             return
         return
 
@@ -1110,9 +1158,27 @@ def handle_text_merged(message: types.Message):
         return
         
     chat_id = message.chat.id
-    user_id = str(message.chat.id)
+    user_id = message.from_user.id
     
     if is_banned(user_id) or not check_bot_open(message):
+        return
+
+    # 📌 Broadcast State ကို ဤနေရာတွင် တိုက်ရိုက်ဖမ်းယူပါသည်
+    if chat_id == ADMIN_ID and awaiting_broadcast.get(chat_id):
+        awaiting_broadcast[chat_id] = False
+        sent, failed = 0, 0
+        for uid in active_users.keys():
+            if uid not in banned_users:
+                try:
+                    bot.send_message(int(uid), message.text)
+                    sent += 1
+                except Exception:
+                    failed += 1
+        bot.send_message(
+            chat_id, 
+            f"📢 Broadcast ပို့ပြီးပါပြီ။\n✅ အောင်မြင်: {sent} ဦး\n❌ မအောင်မြင်: {failed} ဦး", 
+            reply_markup=get_main_menu(chat_id)
+        )
         return
 
     progress_msg = bot.reply_to(message, "စာသားရပြီ - Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ...")
@@ -1136,6 +1202,8 @@ def run_web():
 
 if __name__ == "__main__":
     load_cached_data()
+    # 📌 Render တွင် မအိပ်စေရန် Thread များ ပေါင်းထည့်ထားပါသည်
+    Thread(target=keep_awake, daemon=True).start()
     Thread(target=run_web, daemon=True).start()
     logger.info("Bot စတင် အလုပ်လုပ်နေပါပြီ...")
     bot.infinity_polling(skip_pending=False, timeout=30, long_polling_timeout=30)
