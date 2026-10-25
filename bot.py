@@ -14,6 +14,7 @@ import threading
 import logging
 import requests
 import time
+import html
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -206,10 +207,13 @@ def send_log_to_channel(user, status_text: str):
         else:
             masked_id = uid_str
             
+        # 📌 HTML Error မတက်စေရန် နာမည်ကို html.escape() ခံပေးထားပါသည်
+        safe_name = html.escape(user.first_name or "Unknown")
+            
         log_text = (
             f"🎬 <b>PREMIUM UPDATE</b>\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"👤 User : {user.first_name}\n"
+            f"👤 User : {safe_name}\n"
             f"🆔 <code>{masked_id}</code>\n"
             f"🎉 Status : {status_text}\n"
             f"⏱️ Time : {time_now}\n\n"
@@ -375,7 +379,7 @@ def run_generator_task(chat_id, user, content_bytes, progress_msg_id=None):
             bot.send_message(chat_id, "Token မတွေ့ဘူး (သို့မဟုတ် အကောင့်ပျက်နေသည်) နောက်တစ်ခုစမ်း")
             
     except Exception as e:
-        bot.send_message(chat_id, f"Error: {e}")
+        bot.send_message(chat_id, f"Error: {html.escape(str(e))}")
     finally:
         file_lock.release()
 
@@ -451,13 +455,13 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
             browser.close()
             return {
                 "ok": True, 
-                "msg": f"✅ <b>{service.upper()}</b> TV အတွက် Code <code>{tv_code}</code> ချိတ်ဆက်မှု လုပ်ဆောင်ပြီးပါပြီ။\n\n(TV မျက်နှာပြင်ကို စောင့်ကြည့်ပေးပါ)"
+                "msg": f"✅ <b>{service.upper()}</b> TV အတွက် Code <code>{html.escape(tv_code)}</code> ချိတ်ဆက်မှု လုပ်ဆောင်ပြီးပါပြီ။\n\n(TV မျက်နှာပြင်ကို စောင့်ကြည့်ပေးပါ)"
             }
             
     except PlaywrightTimeoutError:
         return {"ok": False, "msg": "⚠️ Browser ချိတ်ဆက်မှု အချိန်ကြာလွန်းနေပါသည်။ (Timeout)"}
     except Exception as e:
-        return {"ok": False, "msg": f"⚠️ Browser Automation Error: {str(e)}"}
+        return {"ok": False, "msg": f"⚠️ Browser Automation Error: {html.escape(str(e))}"}
 
 # ==========================================
 # KEYBOARDS & MENUS
@@ -567,9 +571,10 @@ def send_welcome_and_menu(message):
     log_user(message)
     
     if not is_user_subscribed(message.from_user.id):
+        safe_name = html.escape(message.from_user.first_name or "")
         bot.reply_to(
             message, 
-            f"✦ <b>ချန်နယ် Join ရန် လိုအပ်ပါသည်</b>\n\nအောက်ပါချန်နယ်သို့ အရင်ဆုံး Join ပေးပါ။", 
+            f"✦ <b>ချန်နယ် Join ရန် လိုအပ်ပါသည်</b>\n\nမင်္ဂလာပါ {safe_name}! 👋\nBot ကို စတင်အသုံးပြုရန် အောက်ပါချန်နယ်သို့ အရင်ဆုံး Join ပေးပါ။", 
             reply_markup=get_join_channel_keyboard(), 
             parse_mode="HTML"
         )
@@ -601,7 +606,8 @@ def handle_tv_commands(message):
 
     code_split = message.text.split(maxsplit=1)
     if len(code_split) < 2:
-        bot.reply_to(message, f"⚠️ TV Code ရိုက်ထည့်ရန် လိုအပ်ပါသည်။ ဥပမာ: <code>{code_split[0]} 123456</code>", parse_mode="HTML")
+        cmd_safe = html.escape(code_split[0])
+        bot.reply_to(message, f"⚠️ TV Code ရိုက်ထည့်ရန် လိုအပ်ပါသည်။ ဥပမာ: <code>{cmd_safe} 123456</code>", parse_mode="HTML")
         return
         
     tv_code = code_split[1].strip().upper()
@@ -631,7 +637,7 @@ def handle_tv_commands(message):
         try:
             res = supabase.table('cookies').select('id, content').eq('service_type', service).limit(1).execute()
             if not res.data:
-                bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=f"❌ {service.upper()} အတွက် Cookie လက်ကျန်မရှိတော့ပါ။")
+                bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=f"❌ {service.upper()} အတွက် Cookie လက်ကျန်မရှိတော့ပါ။ Admin ကို အကြောင်းကြားပေးပါ။")
                 return
                 
             cookie_id = res.data[0]['id']
@@ -663,7 +669,7 @@ def handle_tv_commands(message):
                 )
                 
         except Exception as e:
-            bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=f"⚠️ Error: {e}")
+            bot.edit_message_text(chat_id=message.chat.id, message_id=progress.message_id, text=f"⚠️ Error: {html.escape(str(e))}")
         finally:
             file_lock.release()
             
@@ -680,8 +686,9 @@ def handle_menu_buttons(message):
     text = message.text
 
     if is_banned(user_id):
+        bot.send_message(chat_id, "🚫 သင့်ကို Bot အသုံးပြုခွင့် ပိတ်ထားပါသည် (Blocked)။")
         return
-        
+
     if not check_bot_open(message):
         return
         
@@ -796,7 +803,7 @@ def handle_menu_buttons(message):
                         text="လောလောဆယ် အဆင်ပြေသော Cookie များ ကုန်နေပါသည်ကွာ။"
                     )
             except Exception as e:
-                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error: {e}")
+                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"Error: {html.escape(str(e))}")
             finally:
                 file_lock.release()
 
@@ -832,6 +839,54 @@ def handle_menu_buttons(message):
             reply_markup=admin_panel_keyboard(), 
             parse_mode="HTML"
         )
+
+# ==========================================
+# ADMIN NEXT STEP HANDLERS
+# ==========================================
+
+def process_add_vip(message):
+    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+        return
+    uid = message.text.strip()
+    vip_users.add(uid)
+    try: 
+        supabase.table('vip_users').upsert({'user_id': uid}).execute()
+    except Exception as e: 
+        logger.error(f"Add VIP Error: {e}")
+    bot.send_message(message.chat.id, f"🌟 User ID <code>{html.escape(uid)}</code> ကို VIP အဖြစ် သတ်မှတ်လိုက်ပါပြီ။", parse_mode="HTML")
+
+def process_rm_vip(message):
+    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+        return
+    uid = message.text.strip()
+    vip_users.discard(uid)
+    try: 
+        supabase.table('vip_users').delete().eq('user_id', uid).execute()
+    except Exception as e: 
+        logger.error(f"Remove VIP Error: {e}")
+    bot.send_message(message.chat.id, f"❌ User ID <code>{html.escape(uid)}</code> ကို VIP မှ ပယ်ဖျက်လိုက်ပါပြီ။", parse_mode="HTML")
+
+def process_ban(message):
+    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+        return
+    uid = message.text.strip()
+    banned_users.add(uid)
+    try: 
+        supabase.table('banned_users').upsert({'user_id': uid}).execute()
+    except Exception as e: 
+        logger.error(f"Ban Error: {e}")
+    bot.send_message(message.chat.id, f"🚫 User ID <code>{html.escape(uid)}</code> ကို Block လိုက်ပါပြီ။", parse_mode="HTML")
+
+def process_unban(message):
+    if message.text in ["/start 🔄", BROADCAST_CANCEL_BTN] or message.text in MENU_BUTTONS: 
+        return
+    uid = message.text.strip()
+    banned_users.discard(uid)
+    try: 
+        supabase.table('banned_users').delete().eq('user_id', uid).execute()
+    except Exception as e: 
+        logger.error(f"Unban Error: {e}")
+    bot.send_message(message.chat.id, f"✅ User ID <code>{html.escape(uid)}</code> ကို Unblock လုပ်ပေးလိုက်ပါပြီ။", parse_mode="HTML")
 
 # ==========================================
 # CALLBACK QUERIES
@@ -927,61 +982,24 @@ def handle_callback(call: types.CallbackQuery) -> None:
         
     elif call.data == "panel_list_vip":
         vip_list_str = "\n".join(vip_users) if vip_users else "မရှိပါ"
-        bot.send_message(chat_id, f"🌟 VIP User များ:\n\n{vip_list_str}")
+        bot.send_message(chat_id, f"🌟 VIP User များ:\n\n{html.escape(vip_list_str)}")
         
     elif call.data == "panel_list_banned":
         banned_list_str = "\n".join(banned_users) if banned_users else "မရှိပါ"
-        bot.send_message(chat_id, f"🚫 Block ထားသော User များ:\n\n{banned_list_str}")
+        bot.send_message(chat_id, f"🚫 Block ထားသော User များ:\n\n{html.escape(banned_list_str)}")
         
     elif call.data == "panel_clear":
         try:
             supabase.table('cookies').delete().gt('id', -1).execute()
             bot.send_message(chat_id, "🗑 Cookie အဟောင်းများ အားလုံး ရှင်းလင်းပြီးပါပြီ။")
         except Exception as e:
-            bot.send_message(chat_id, f"Error clearing cookies: {e}")
+            bot.send_message(chat_id, f"Error clearing cookies: {html.escape(str(e))}")
             
     elif call.data == "panel_broadcast":
         awaiting_broadcast[str(chat_id)] = True
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add(BROADCAST_CANCEL_BTN)
         bot.send_message(chat_id, "📢 Broadcast စာသားကို ရိုက်ပို့ပါ။", reply_markup=markup)
-
-
-def process_add_vip(message):
-    uid = message.text.strip()
-    vip_users.add(uid)
-    try:
-        supabase.table('vip_users').upsert({'user_id': uid}).execute()
-        bot.send_message(message.chat.id, f"🌟 {uid} VIP သတ်မှတ်ပြီးပါပြီ")
-    except Exception as e:
-        logger.error(f"VIP add error: {e}")
-
-def process_rm_vip(message):
-    uid = message.text.strip()
-    vip_users.discard(uid)
-    try:
-        supabase.table('vip_users').delete().eq('user_id', uid).execute()
-        bot.send_message(message.chat.id, f"❌ {uid} VIP ဖြုတ်ပြီးပါပြီ")
-    except Exception as e:
-        logger.error(f"VIP remove error: {e}")
-
-def process_ban(message):
-    uid = message.text.strip()
-    banned_users.add(uid)
-    try:
-        supabase.table('banned_users').upsert({'user_id': uid}).execute()
-        bot.send_message(message.chat.id, f"🚫 {uid} Block ပြီးပါပြီ")
-    except Exception as e:
-        logger.error(f"Ban error: {e}")
-
-def process_unban(message):
-    uid = message.text.strip()
-    banned_users.discard(uid)
-    try:
-        supabase.table('banned_users').delete().eq('user_id', uid).execute()
-        bot.send_message(message.chat.id, f"✅ {uid} Unblock ပြီးပါပြီ")
-    except Exception as e:
-        logger.error(f"Unban error: {e}")
 
 # ==========================================
 # FILE UPLOAD HANDLERS
@@ -1045,7 +1063,7 @@ def process_document_merged(message: types.Message):
                 parse_mode="HTML"
             )
         except Exception as e:
-            bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error: {e}")
+            bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error: {html.escape(str(e))}")
         return
 
     if not message.document.file_name.lower().endswith('.txt'):
@@ -1064,7 +1082,7 @@ def process_document_merged(message: types.Message):
             file_data = bot.download_file(file_info.file_path)
             run_generator_task(message.chat.id, message.from_user, file_data, progress_msg.message_id)
         except Exception as e:
-            bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text=f"Error: {e}")
+            bot.edit_message_text(chat_id=message.chat.id, message_id=progress_msg.message_id, text=f"Error: {html.escape(str(e))}")
             
     Thread(target=document_task).start()
 
