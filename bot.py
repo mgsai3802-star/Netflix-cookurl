@@ -147,6 +147,7 @@ def increment_quota(uid: str, date_str: str) -> int:
 
 def get_available_cookies_count() -> int:
     try:
+        # 📌 မူလစနစ်အတိုင်း netflix နှင့် tag မပါသော (null) cookie များကိုသာ ရေတွက်ရန်
         res = supabase.table('cookies').select('id', count='exact').or_('service_type.eq.netflix,service_type.is.null').execute()
         if res.count:
             return res.count
@@ -387,7 +388,6 @@ def run_generator_task(chat_id, user, content_bytes, progress_msg_id=None):
 # ==========================================
 
 def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> dict:
-    """နောက်ကွယ်မှ Browser ဖြင့် TV Code ကို Auto ရိုက်ထည့်ပေးမည့် စနစ်"""
     playwright_cookies = []
     
     for line in cookie_text.splitlines():
@@ -399,6 +399,7 @@ def submit_tv_code_playwright(service: str, tv_code: str, cookie_text: str) -> d
         if m:
             domain = m.group('domain')
             
+            # 📌 TV Login အတွက် Cookie များကို စစ်ထုတ်ခြင်း
             if service == "netflix" and not ("netflix" in domain):
                 continue
             elif service == "hbo" and not ("max" in domain or "hbo" in domain):
@@ -584,7 +585,6 @@ def send_welcome_and_menu(message):
         )
         return
         
-    # 📌 နှုတ်ဆက်စာသား အသစ်
     welcome_text = (
         "👋 <b>မင်္ဂလာပါ ဝေ့... Ren Digital Service မှ ကြိုဆိုပါတယ်</b>\n\n"
         "ဒီ Bot လေးကနေ အောက်ပါ ဝန်ဆောင်မှုတွေကို အလွယ်တကူ ရယူနိုင်ပါပြီ-\n\n"
@@ -782,11 +782,10 @@ def handle_menu_buttons(message):
             try:
                 clean_url = None
                 attempts = 0
-                max_attempts = 3
+                max_attempts = 5 # 📌 Cookie အပျက်တွေချည်း ၅ ခါဆက်တိုက်ကြုံမှ ရပ်ပါမည်
                 
-                # 📌 Database ထဲက Cookie တွေကို ယူစစ်တဲ့အခါ အများဆုံး ၃ ခုပဲစစ်ပါမယ်
-                # Cookie တွေ တစ်ခါတည်း အကုန်ပျောက်မသွားအောင် ကာကွယ်ပေးထားပါတယ်
                 while attempts < max_attempts:
+                    # 📌 မူလ Database Query အတိုင်း အတိအကျ ပြန်လည်ပြင်ဆင်ထားပါသည် (Cookie အဟောင်းများ ပြန်အလုပ်လုပ်ပါမည်)
                     res = supabase.table('cookies').select('id, content').or_('service_type.eq.netflix,service_type.is.null').limit(1).execute()
                     if not res.data:
                         break
@@ -822,11 +821,10 @@ def handle_menu_buttons(message):
                     )
                     send_log_to_channel(message.from_user, "Netflix Token Link ထုတ်ယူသွားပါသည်။")
                 elif attempts >= max_attempts:
-                    # သက်တမ်းကုန်နေတဲ့ Cookie တွေချည်း ၃ ခုဆက်တိုက် ကြုံသွားရင် အကုန်မဖြတ်တော့ဘဲ အသိပေးပါမယ်
                     bot.edit_message_text(
                         chat_id=chat_id, 
                         message_id=wait_msg.message_id, 
-                        text="⚠️ <b>Cookie သက်တမ်းကုန်နေပါသည်။</b>\n\nစစ်ဆေးခဲ့သော Cookie (၃) ခုမှာ အလုပ်မလုပ်ပါ။ 'Netflix login link ယူရန်' ကို ထပ်နှိပ်ပြီး နောက်ထပ် Cookie များကို ဆက်စမ်းကြည့်ပေးပါ။",
+                        text="⚠️ <b>Cookie သက်တမ်းကုန်နေပါသည်။</b>\n\nစစ်ဆေးခဲ့သော Cookie များမှာ အလုပ်မလုပ်ပါ။ 'Netflix login link ယူရန်' ကို ထပ်နှိပ်ပြီး နောက်ထပ် Cookie များကို ဆက်စမ်းကြည့်ပေးပါ။",
                         parse_mode="HTML"
                     )
                 else:
