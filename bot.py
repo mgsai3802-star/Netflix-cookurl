@@ -600,7 +600,7 @@ def send_welcome_and_menu(message):
     log_user(message)
     user_id = str(message.from_user.id)
     
-    # --- 📌 Anti-Cheat Referral System ---
+    # --- 📌 Anti-Cheat Referral System (1 Credit per Invite) ---
     if message.text.startswith('/start '):
         inviter_id = message.text.split(' ')[1]
         if inviter_id.isdigit() and inviter_id != user_id:
@@ -609,7 +609,7 @@ def send_welcome_and_menu(message):
                 if is_user_subscribed(message.from_user.id) and not message.from_user.is_bot:
                     try:
                         supabase.table('users').update({'referred_by': inviter_id}).eq('user_id', user_id).execute()
-                        add_peacock_credit(inviter_id, 1)
+                        add_peacock_credit(inviter_id, 1) # 1 Credit per invite
                         bot.send_message(int(inviter_id), "🎉 ဂုဏ်ယူပါသည်! လူတစ်ယောက် ဖိတ်ခေါ်နိုင်ခဲ့သဖြင့် Peacock <b>1 Credit</b> ရရှိပါပြီ။", parse_mode="HTML")
                     except Exception as e:
                         logger.error(f"Referral logic error: {e}")
@@ -801,9 +801,10 @@ def handle_menu_buttons(message):
         bonus_text = "❌ ယူပြီးပါပြီ"
         if last_claim != today:
             try:
-                supabase.table('users').update({'peacock_credit': credits + 10, 'last_daily_claim': today}).eq('user_id', str(user_id)).execute()
-                credits += 10
-                bonus_text = "✅ (ယနေ့အတွက် 10 မှတ် ရရှိပါပြီ)"
+                # 📌 နေ့စဉ် Check-in 1 မှတ် ပေးမည်
+                supabase.table('users').update({'peacock_credit': credits + 1, 'last_daily_claim': today}).eq('user_id', str(user_id)).execute()
+                credits += 1
+                bonus_text = "✅ (ယနေ့အတွက် 1 မှတ် ရရှိပါပြီ)"
             except Exception as e:
                 logger.error(f"Daily claim error: {e}")
 
@@ -818,11 +819,12 @@ def handle_menu_buttons(message):
         )
         bot.send_message(chat_id, msg, parse_mode="HTML")
 
-    elif text == "🦚 Peacock TV (Email:Pass)":
+    elif text == "🦚 Peacock TV Premium Private Account(Email:Pass)":
+        # 📌 ခလုတ်စာသားပြောင်းထားသည်
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("30 Days (11 Credits)", callback_data="buy_peacock_30"),
-            types.InlineKeyboardButton("1 Year (20 Credits)", callback_data="buy_peacock_365")
+            types.InlineKeyboardButton("30 Days (3 Credits)", callback_data="buy_peacock_30"),
+            types.InlineKeyboardButton("1 Year (10 Credits)", callback_data="buy_peacock_365")
         )
         bot.send_message(
             chat_id, 
@@ -1025,7 +1027,8 @@ def handle_callback(call: types.CallbackQuery) -> None:
     # 📌 Peacock TV Account ဝယ်ယူခြင်း (Admin & VIP Bypass + VPN Warning)
     if call.data.startswith("buy_peacock_"):
         plan = "30days" if call.data == "buy_peacock_30" else "1year"
-        cost = 11 if plan == "30days" else 20
+        # 📌 30days = 3 credits, 1year = 10 credits ပြောင်းလဲသတ်မှတ်ထားသည်
+        cost = 3 if plan == "30days" else 10
         
         user_data = get_user_peacock_data(str(user_id))
         credits = user_data.get('peacock_credit') or 0
