@@ -1071,7 +1071,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
             
             msg_text = (
                 f"🦚 <b>Peacock TV Private Account({plan})</b>\n\n"
-                f"✅ ဝယ်ယူမှု အောင်မြင်ပါသည်။\n\n"
+                f"✅ အောင်မြင်ပါသည်။\n\n"
                 f"{acc_text}\n\n"
                 f"💳 လက်ကျန် Credit: <b>{rem_credit}</b>\n\n"
                 f"⚠️ <b>သတိပြုရန်:</b> အသုံးပြုရန် VPN ကို <b>United States (US 🇺🇸)</b> သို့ ချိတ်ဆက်ထားရန် လိုအပ်ပါသည်။"
@@ -1088,6 +1088,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
             bot.answer_callback_query(call.id, "⚠️ Error occurred.", show_alert=True)
             logger.error(f"Peacock buy error: {e}")
         return
+
 
 
     # ZIP / TXT Upload Handling Menu
