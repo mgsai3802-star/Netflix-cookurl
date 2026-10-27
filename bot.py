@@ -70,6 +70,7 @@ stop_flags = {}
 awaiting_broadcast = {}
 _pending_upload_admins: dict[int, str] = {}
 _pending_lock = threading.Lock()
+pending_referrals: dict[str, str] = {}
 
 TV_LOGIN_BTN = "📺 TV Login"
 
@@ -600,20 +601,14 @@ def send_welcome_and_menu(message):
     log_user(message)
     user_id = str(message.from_user.id)
     
-    # --- 📌 Anti-Cheat Referral System (1 Credit per Invite) ---
+    # --- 📌 Anti-Cheat Referral System (Memory ထဲတွင် ခဏမှတ်ထားမည်) ---
     if message.text.startswith('/start '):
         inviter_id = message.text.split(' ')[1]
         if inviter_id.isdigit() and inviter_id != user_id:
             res = supabase.table('users').select('referred_by').eq('user_id', user_id).execute()
             if res.data and not res.data[0].get('referred_by'):
-                if is_user_subscribed(message.from_user.id) and not message.from_user.is_bot:
-                    try:
-                        supabase.table('users').update({'referred_by': inviter_id}).eq('user_id', user_id).execute()
-                        add_peacock_credit(inviter_id, 1) # 1 Credit per invite
-                        bot.send_message(int(inviter_id), "🎉 ဂုဏ်ယူပါသည်! လူတစ်ယောက် ဖိတ်ခေါ်နိုင်ခဲ့သဖြင့် Peacock <b>1 Credit</b> ရရှိပါပြီ။", parse_mode="HTML")
-                    except Exception as e:
-                        logger.error(f"Referral logic error: {e}")
-    # --------------------------------------
+                pending_referrals[user_id] = inviter_id
+    # -----------------------------------------------------------
 
     if not is_user_subscribed(message.from_user.id):
         safe_name = html.escape(message.from_user.first_name or "")
@@ -625,6 +620,17 @@ def send_welcome_and_menu(message):
         )
         return
         
+    # --- 📌 အကယ်၍ အရင်ကတည်းက Channel Join ထားပြီးသား လူဆိုလျှင် ချက်ချင်း Credit ပေးမည် ---
+    if user_id in pending_referrals:
+        inviter = pending_referrals.pop(user_id)
+        try:
+            supabase.table('users').update({'referred_by': inviter}).eq('user_id', user_id).execute()
+            add_peacock_credit(inviter, 1)
+            bot.send_message(int(inviter), "🎉 ဂုဏ်ယူပါသည်! လူတစ်ယောက် ဖိတ်ခေါ်နိုင်ခဲ့သဖြင့် Peacock <b>1 Credit</b> ရရှိပါပြီ။", parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Referral logic error: {e}")
+    # --------------------------------------------------------------------------
+
     welcome_text = (
         "👋 မင်္ဂလာပါ ဝေ့... \n\n"
         "အောက်ပါ ဝန်ဆောင်မှုတွေကို အလွယ်တကူ ရယူနိုင်ပါပြီ-\n\n"
@@ -820,7 +826,6 @@ def handle_menu_buttons(message):
         bot.send_message(chat_id, msg, parse_mode="HTML")
 
     elif text == "🦚 Peacock TV Premium Private Account(Email:Pass)":
-        # 📌 ခလုတ်စာသားပြောင်းထားသည်
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton("30 Days (3 Credits)", callback_data="buy_peacock_30"),
@@ -829,7 +834,7 @@ def handle_menu_buttons(message):
         bot.send_message(
             chat_id, 
             "🦚 <b>Peacock TV Premium</b>\n\n"
-            "⚠️ <b>မှတ်ချက်:</b> Peacock TV အသုံးပြုရန် <b>VPN United States (US 🇺🇸)</b> ချိတ်ဆက်ထားရန် လိုအပ်ပါသည်။\n\n"
+            "⚠️ <b>မှတ်ချက်:</b> Peacock TV အကောင့်အသုံးပြုရန် <b>VPN United States (US 🇺🇸)</b> ချိတ်ဆက်ထားရန် လိုအပ်ပါသည်။\n\n"
             "လိုချင်သည့် Plan ကို အောက်မှ ရွေးချယ်ပါ-", 
             reply_markup=markup, 
             parse_mode="HTML"
@@ -1027,7 +1032,6 @@ def handle_callback(call: types.CallbackQuery) -> None:
     # 📌 Peacock TV Account ဝယ်ယူခြင်း (Admin & VIP Bypass + VPN Warning)
     if call.data.startswith("buy_peacock_"):
         plan = "30days" if call.data == "buy_peacock_30" else "1year"
-        # 📌 30days = 3 credits, 1year = 10 credits ပြောင်းလဲသတ်မှတ်ထားသည်
         cost = 3 if plan == "30days" else 10
         
         user_data = get_user_peacock_data(str(user_id))
@@ -1059,7 +1063,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
             
             msg_text = (
                 f"🦚 <b>Peacock TV Private Account({plan})</b>\n\n"
-                f"✅ ဝယ်ယူမှု အောင်မြင်ပါသည်။\n\n"
+                f"✅ အောင်မြင်ပါသည်။\n\n"
                 f"📧 Email:Pass 👇\n<code>{email_pass}</code>\n\n"
                 f"💳 လက်ကျန် Credit: <b>{rem_credit}</b>\n\n"
                 f"⚠️ <b>သတိပြုရန်:</b> အသုံးပြုရန် VPN ကို <b>United States (US 🇺🇸)</b> သို့ ချိတ်ဆက်ထားရန် လိုအပ်ပါသည်။"
@@ -1144,7 +1148,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
         )
         return
 
-    # Channel Check
+    # Channel Check (Referral Logic Included here for delayed tracking)
     if call.data == "check_joined":
         if is_user_subscribed(user_id):
             bot.answer_callback_query(call.id, "✅ အောင်မြင်ပါသည်။")
@@ -1154,6 +1158,20 @@ def handle_callback(call: types.CallbackQuery) -> None:
                 "မင်္ဂလာပါ ဝေ့ - အောက်က ခလုတ်‌တွေကိုနှိပ်ပြီး အသုံးပြုနိုင်ပါပြီ", 
                 reply_markup=get_main_menu(user_id)
             )
+            
+            # --- 📌 Channel Join ပြီးသွားပြီဖြစ်၍ ဖိတ်ခေါ်သူကို Database တွင် Credit ပေးမည် ---
+            str_uid = str(user_id)
+            if str_uid in pending_referrals:
+                inviter = pending_referrals.pop(str_uid) # Memory ထဲမှ ထုတ်ယူပြီး ဖျက်မည်
+                res = supabase.table('users').select('referred_by').eq('user_id', str_uid).execute()
+                if res.data and not res.data[0].get('referred_by'):
+                    try:
+                        supabase.table('users').update({'referred_by': inviter}).eq('user_id', str_uid).execute()
+                        add_peacock_credit(inviter, 1)
+                        bot.send_message(int(inviter), "🎉 ဂုဏ်ယူပါသည်! လူတစ်ယောက် ဖိတ်ခေါ်နိုင်ခဲ့သဖြင့် Peacock <b>1 Credit</b> ရရှိပါပြီ။", parse_mode="HTML")
+                    except Exception as e:
+                        logger.error(f"Referral logic error: {e}")
+            # ----------------------------------------------------------------------
         else:
             bot.answer_callback_query(call.id, "⚠️ သင်သည် Channel သို့ အရင်ဆုံး Join ရန် လိုအပ်ပါသည်။", show_alert=True)
         return
