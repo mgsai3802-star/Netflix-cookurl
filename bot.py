@@ -78,7 +78,7 @@ MENU_BUTTONS = [
     "ကျွန်ုပ်၏ Quota 📊", 
     "လက်ကျန်စာရင်း 📋", 
     "🎁 Get Quota (Peacock)", 
-    "🦚 Peacock TV (Email:Pass)",
+    "🦚 Peacock TV Premium Private Account(Email:Pass)",
     "ZIP ဖိုင် တင်ရန် 📤", 
     "Admin Panel ⚙️", 
     "🌟 Get VIP 🌟", 
@@ -477,7 +477,7 @@ def get_main_menu(user_id=None):
     
     markup.add(types.KeyboardButton("Netflix login link ယူရန်"))
     markup.add(types.KeyboardButton("ကျွန်ုပ်၏ Quota 📊"), types.KeyboardButton("လက်ကျန်စာရင်း 📋"))
-    markup.add(types.KeyboardButton("🎁 Get Quota (Peacock)"), types.KeyboardButton("🦚 Peacock TV (Email:Pass)"))
+    markup.add(types.KeyboardButton("🎁 Get Quota (Peacock)"), types.KeyboardButton("🦚 Peacock TV Premium Private Account(Email:Pass)"))
     
     if user_id and is_admin(user_id):
         markup.add(types.KeyboardButton("ZIP ဖိုင် တင်ရန် 📤"), types.KeyboardButton("Admin Panel ⚙️"))
@@ -565,6 +565,30 @@ def close_bot(message):
         
     bot.reply_to(message, "🛑 <b>Bot ကို ပိတ်လိုက်ပါပြီ (Maintenance)။</b>", parse_mode="HTML")
 
+# 📌 ADMIN ADD CREDIT COMMAND
+@bot.message_handler(commands=['addcredit'])
+def add_credit_command(message):
+    if not is_admin(message.from_user.id):
+        return
+    
+    parts = message.text.split()
+    if len(parts) != 3:
+        bot.reply_to(message, "⚠️ အသုံးပြုပုံ မှားယွင်းနေပါသည်။\nဥပမာ: <code>/addcredit 123456789 50</code>", parse_mode="HTML")
+        return
+        
+    target_uid = parts[1]
+    try:
+        amount = int(parts[2])
+    except ValueError:
+        bot.reply_to(message, "⚠️ ပမာဏကို ဂဏန်းဖြင့်သာ ထည့်ပါ။")
+        return
+        
+    try:
+        add_peacock_credit(target_uid, amount)
+        bot.reply_to(message, f"✅ User ID <code>{target_uid}</code> သို့ Peacock Credit <b>{amount}</b> မှတ် ထည့်သွင်းပေးလိုက်ပါပြီ။", parse_mode="HTML")
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
+
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome_and_menu(message):
     if is_banned(message.chat.id):
@@ -580,15 +604,13 @@ def send_welcome_and_menu(message):
     if message.text.startswith('/start '):
         inviter_id = message.text.split(' ')[1]
         if inviter_id.isdigit() and inviter_id != user_id:
-            # Check if new user (no referred_by yet)
             res = supabase.table('users').select('referred_by').eq('user_id', user_id).execute()
             if res.data and not res.data[0].get('referred_by'):
-                # Force Channel Join Check & Anti-bot Check
                 if is_user_subscribed(message.from_user.id) and not message.from_user.is_bot:
                     try:
                         supabase.table('users').update({'referred_by': inviter_id}).eq('user_id', user_id).execute()
                         add_peacock_credit(inviter_id, 1)
-                        bot.send_message(int(inviter_id), "🎉 ဂုဏ်ယူပါသည်! လူသစ်တစ်ယောက် ဖိတ်ခေါ်နိုင်ခဲ့သဖြင့် Peacock <b>1 Credit</b> ရရှိပါပြီ။", parse_mode="HTML")
+                        bot.send_message(int(inviter_id), "🎉 ဂုဏ်ယူပါသည်! လူတစ်ယောက် ဖိတ်ခေါ်နိုင်ခဲ့သဖြင့် Peacock <b>1 Credit</b> ရရှိပါပြီ။", parse_mode="HTML")
                     except Exception as e:
                         logger.error(f"Referral logic error: {e}")
     # --------------------------------------
@@ -610,8 +632,8 @@ def send_welcome_and_menu(message):
         "▪️ Netflix, HBO Max, Prime Video, Crunchyroll စတဲ့ TV Code တွေကို ပို့ပေးရုံနဲ့ အလိုအလျောက် ချိတ်ဆက်ပေးပါမယ်။\n\n"
         "🔗 Netflix Cookie to URL Link\n"
         "▪️ အသင့်သုံး Netflix Cookie ကနေ 15 မိနစ်ခံ Token Link ကို ထုတ်ယူနိုင်ပါတယ်။\n\n"
-        "🦚 <b>NEW: Peacock TV Premium (Email & Pass)</b>\n"
-        "▪️ Daily Credits နှင့် Referrals များရှာဖွေပြီး အခမဲ့ အကောင့်များ ထုတ်ယူနိုင်ပါသည်။\n\n"
+        "🦚 <b>New: Peacock TV Premium Private Accounts(Email & Pass)</b>\n"
+        "▪️ Daily Credits နှင့် Referrals များရှာဖွေပြီး အခမဲ့ ထုတ်ယူနိုင်ပါသည်။\n\n"
         "အောက်ပါ Menu ခလုတ်များကို နှိပ်၍ စတင် အသုံးပြုနိုင်ပါပြီ 👇"
     )
         
@@ -802,7 +824,14 @@ def handle_menu_buttons(message):
             types.InlineKeyboardButton("30 Days (11 Credits)", callback_data="buy_peacock_30"),
             types.InlineKeyboardButton("1 Year (20 Credits)", callback_data="buy_peacock_365")
         )
-        bot.send_message(chat_id, "🦚 <b>Peacock TV Premium</b>\n\nလိုချင်သည့် Plan ကို အောက်မှ ရွေးချယ်ပါ-", reply_markup=markup, parse_mode="HTML")
+        bot.send_message(
+            chat_id, 
+            "🦚 <b>Peacock TV Premium</b>\n\n"
+            "⚠️ <b>မှတ်ချက်:</b> Peacock TV အသုံးပြုရန် <b>VPN United States (US 🇺🇸)</b> ချိတ်ဆက်ထားရန် လိုအပ်ပါသည်။\n\n"
+            "လိုချင်သည့် Plan ကို အောက်မှ ရွေးချယ်ပါ-", 
+            reply_markup=markup, 
+            parse_mode="HTML"
+        )
 
     elif text == "🌟 Get VIP 🌟":
         bot.send_message(
@@ -993,7 +1022,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
     if is_banned(user_id):
         return
 
-    # 📌 Peacock TV Account ဝယ်ယူခြင်း
+    # 📌 Peacock TV Account ဝယ်ယူခြင်း (Admin & VIP Bypass + VPN Warning)
     if call.data.startswith("buy_peacock_"):
         plan = "30days" if call.data == "buy_peacock_30" else "1year"
         cost = 11 if plan == "30days" else 20
@@ -1001,7 +1030,9 @@ def handle_callback(call: types.CallbackQuery) -> None:
         user_data = get_user_peacock_data(str(user_id))
         credits = user_data.get('peacock_credit') or 0
         
-        if credits < cost:
+        is_free_user = not (is_admin(user_id) or is_vip(user_id))
+        
+        if is_free_user and credits < cost:
             bot.answer_callback_query(call.id, f"⚠️ Credit မလုံလောက်ပါ။ {cost} မှတ် လိုအပ်ပါသည်။ (လက်ရှိ: {credits})", show_alert=True)
             return
             
@@ -1014,14 +1045,27 @@ def handle_callback(call: types.CallbackQuery) -> None:
             acc_id = res.data[0]['id']
             email_pass = res.data[0]['email_pass']
             
-            # နုတ်မည် & အကောင့်ထုတ်ပေးမည်
             supabase.table('peacock_accounts').delete().eq('id', acc_id).execute()
-            supabase.table('users').update({'peacock_credit': credits - cost}).eq('user_id', str(user_id)).execute()
+            
+            # 📌 Free User တွေအတွက်ပဲ Credit နုတ်မည်
+            if is_free_user:
+                supabase.table('users').update({'peacock_credit': credits - cost}).eq('user_id', str(user_id)).execute()
+                rem_credit = credits - cost
+            else:
+                rem_credit = "Unlimited (VIP/Admin)"
+            
+            msg_text = (
+                f"🦚 <b>Peacock TV Private Account({plan})</b>\n\n"
+                f"✅ ဝယ်ယူမှု အောင်မြင်ပါသည်။\n\n"
+                f"📧 Email:Pass 👇\n<code>{email_pass}</code>\n\n"
+                f"💳 လက်ကျန် Credit: <b>{rem_credit}</b>\n\n"
+                f"⚠️ <b>သတိပြုရန်:</b> အသုံးပြုရန် VPN ကို <b>United States (US 🇺🇸)</b> သို့ ချိတ်ဆက်ထားရန် လိုအပ်ပါသည်။"
+            )
             
             bot.edit_message_text(
                 chat_id=chat_id, 
                 message_id=call.message.message_id, 
-                text=f"🦚 <b>Peacock TV ({plan})</b>\n\n✅ ဝယ်ယူမှု အောင်မြင်ပါသည်။\n\n📧 Email:Pass 👇\n<code>{email_pass}</code>\n\n💳 လက်ကျန် Credit: <b>{credits - cost}</b>", 
+                text=msg_text, 
                 parse_mode="HTML"
             )
             send_log_to_channel(call.from_user, f"Peacock {plan} အကောင့် ထုတ်ယူသွားပါသည်။")
