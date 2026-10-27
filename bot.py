@@ -1029,7 +1029,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
     if is_banned(user_id):
         return
 
-    # 📌 Peacock TV Account ဝယ်ယူခြင်း (Admin & VIP Bypass + VPN Warning)
+        # 📌 Peacock TV Account ဝယ်ယူခြင်း (Admin & VIP Bypass + VPN Warning)
     if call.data.startswith("buy_peacock_"):
         plan = "30days" if call.data == "buy_peacock_30" else "1year"
         cost = 3 if plan == "30days" else 10
@@ -1061,10 +1061,18 @@ def handle_callback(call: types.CallbackQuery) -> None:
             else:
                 rem_credit = "Unlimited (VIP/Admin)"
             
+            # 📌 Email နဲ့ Password ကို သီးသန့်ခွဲထုတ်ပြီး Mono format ပြောင်းခြင်း
+            try:
+                email, password = email_pass.split(':', 1)
+                acc_text = f"Email 📨 : <code>{email.strip()}</code>\nPassword 🔑 : <code>{password.strip()}</code>"
+            except ValueError:
+                # အကယ်၍ ':' မပါဘဲ ပုံစံလွဲနေခဲ့လျှင် အဟောင်းအတိုင်း ပြမည်
+                acc_text = f"📧 Email:Pass 👇\n<code>{email_pass}</code>"
+            
             msg_text = (
                 f"🦚 <b>Peacock TV Private Account({plan})</b>\n\n"
-                f"✅ အောင်မြင်ပါသည်။\n\n"
-                f"📧 Email:Pass 👇\n<code>{email_pass}</code>\n\n"
+                f"✅ ဝယ်ယူမှု အောင်မြင်ပါသည်။\n\n"
+                f"{acc_text}\n\n"
                 f"💳 လက်ကျန် Credit: <b>{rem_credit}</b>\n\n"
                 f"⚠️ <b>သတိပြုရန်:</b> အသုံးပြုရန် VPN ကို <b>United States (US 🇺🇸)</b> သို့ ချိတ်ဆက်ထားရန် လိုအပ်ပါသည်။"
             )
@@ -1080,6 +1088,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
             bot.answer_callback_query(call.id, "⚠️ Error occurred.", show_alert=True)
             logger.error(f"Peacock buy error: {e}")
         return
+
 
     # ZIP / TXT Upload Handling Menu
     if call.data.startswith("zip_"):
