@@ -1,4 +1,4 @@
-"""Combined Telegram bot with Users, VIPs, Bans, Cookies, Settings, TV Login (Playwright Browser Automation)."""
+"""Combined Telegram bot with Users, VIPs, Bans, Cookies, Settings, TV Login (Playwright), Peacock TV Quota & Referrals."""
 
 from __future__ import annotations
 
@@ -77,6 +77,8 @@ MENU_BUTTONS = [
     "Netflix login link ယူရန်", 
     "ကျွန်ုပ်၏ Quota 📊", 
     "လက်ကျန်စာရင်း 📋", 
+    "🎁 Get Quota (Peacock)", 
+    "🦚 Peacock TV (Email:Pass)",
     "ZIP ဖိုင် တင်ရန် 📤", 
     "Admin Panel ⚙️", 
     "🌟 Get VIP 🌟", 
@@ -161,7 +163,7 @@ def increment_quota(uid: str, date_str: str) -> int:
     return new_count
 
 def get_all_cookies_stats() -> dict:
-    stats = {"netflix": 0, "hbo": 0, "prime": 0, "crunchyroll": 0}
+    stats = {"netflix": 0, "hbo": 0, "prime": 0, "crunchyroll": 0, "peacock30": 0, "peacock365": 0}
     try:
         r_nf = supabase.table('cookies').select('id', count='exact').or_('service_type.eq.netflix,service_type.is.null').execute()
         stats["netflix"] = r_nf.count if r_nf.count else 0
@@ -174,9 +176,35 @@ def get_all_cookies_stats() -> dict:
         
         r_cr = supabase.table('cookies').select('id', count='exact').eq('service_type', 'crunchyroll').execute()
         stats["crunchyroll"] = r_cr.count if r_cr.count else 0
+
+        r_p30 = supabase.table('peacock_accounts').select('id', count='exact').eq('plan_type', '30days').execute()
+        stats["peacock30"] = r_p30.count if r_p30.count else 0
+        
+        r_p365 = supabase.table('peacock_accounts').select('id', count='exact').eq('plan_type', '1year').execute()
+        stats["peacock365"] = r_p365.count if r_p365.count else 0
+        
     except Exception as e:
         logger.error(f"Stats count error: {e}")
     return stats
+
+# --- 📌 PEACOCK CREDITS HELPER FUNCTIONS ---
+def get_user_peacock_data(user_id: str) -> dict:
+    try:
+        res = supabase.table('users').select('peacock_credit, last_daily_claim').eq('user_id', user_id).execute()
+        if res.data:
+            return res.data[0]
+    except Exception as e:
+        logger.error(f"Error fetching user data: {e}")
+    return {"peacock_credit": 0, "last_daily_claim": None}
+
+def add_peacock_credit(user_id: str, amount: int):
+    data = get_user_peacock_data(user_id)
+    current_credit = data.get('peacock_credit') or 0
+    try:
+        supabase.table('users').update({'peacock_credit': current_credit + amount}).eq('user_id', user_id).execute()
+    except Exception as e:
+        logger.error(f"Error adding peacock credit: {e}")
+# ---------------------------------------------
 
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
@@ -449,6 +477,7 @@ def get_main_menu(user_id=None):
     
     markup.add(types.KeyboardButton("Netflix login link ယူရန်"))
     markup.add(types.KeyboardButton("ကျွန်ုပ်၏ Quota 📊"), types.KeyboardButton("လက်ကျန်စာရင်း 📋"))
+    markup.add(types.KeyboardButton("🎁 Get Quota (Peacock)"), types.KeyboardButton("🦚 Peacock TV (Email:Pass)"))
     
     if user_id and is_admin(user_id):
         markup.add(types.KeyboardButton("ZIP ဖိုင် တင်ရန် 📤"), types.KeyboardButton("Admin Panel ⚙️"))
@@ -545,7 +574,25 @@ def send_welcome_and_menu(message):
         return
         
     log_user(message)
+    user_id = str(message.from_user.id)
     
+    # --- 📌 Anti-Cheat Referral System ---
+    if message.text.startswith('/start '):
+        inviter_id = message.text.split(' ')[1]
+        if inviter_id.isdigit() and inviter_id != user_id:
+            # Check if new user (no referred_by yet)
+            res = supabase.table('users').select('referred_by').eq('user_id', user_id).execute()
+            if res.data and not res.data[0].get('referred_by'):
+                # Force Channel Join Check & Anti-bot Check
+                if is_user_subscribed(message.from_user.id) and not message.from_user.is_bot:
+                    try:
+                        supabase.table('users').update({'referred_by': inviter_id}).eq('user_id', user_id).execute()
+                        add_peacock_credit(inviter_id, 1)
+                        bot.send_message(int(inviter_id), "🎉 ဂုဏ်ယူပါသည်! လူသစ်တစ်ယောက် ဖိတ်ခေါ်နိုင်ခဲ့သဖြင့် Peacock <b>1 Credit</b> ရရှိပါပြီ။", parse_mode="HTML")
+                    except Exception as e:
+                        logger.error(f"Referral logic error: {e}")
+    # --------------------------------------
+
     if not is_user_subscribed(message.from_user.id):
         safe_name = html.escape(message.from_user.first_name or "")
         bot.reply_to(
@@ -562,8 +609,9 @@ def send_welcome_and_menu(message):
         "📺 TV Login Services (Auto Connect)\n"
         "▪️ Netflix, HBO Max, Prime Video, Crunchyroll စတဲ့ TV Code တွေကို ပို့ပေးရုံနဲ့ အလိုအလျောက် ချိတ်ဆက်ပေးပါမယ်။\n\n"
         "🔗 Netflix Cookie to URL Link\n"
-        "▪️ အသင့်သုံး Netflix Cookie ကနေ 15 မိနစ်ခံ Token Link ကို 'Netflix login link ယူရန်' ခလုတ်နှိပ်ပြီး ထုတ်ယူနိုင်ပါတယ်။\n"
-        "▪️ (သို့) ကိုယ်ပိုင် Cookie .txt ဖိုင်/စာသား များကို Bot ဆီ တိုက်ရိုက်ပေးပို့ပြီးလည်း လင့်ခ်ပြောင်းလဲနိုင်ပါတယ်။\n\n"
+        "▪️ အသင့်သုံး Netflix Cookie ကနေ 15 မိနစ်ခံ Token Link ကို ထုတ်ယူနိုင်ပါတယ်။\n\n"
+        "🦚 <b>NEW: Peacock TV Premium (Email & Pass)</b>\n"
+        "▪️ Daily Credits နှင့် Referrals များရှာဖွေပြီး အခမဲ့ အကောင့်များ ထုတ်ယူနိုင်ပါသည်။\n\n"
         "အောက်ပါ Menu ခလုတ်များကို နှိပ်၍ စတင် အသုံးပြုနိုင်ပါပြီ 👇"
     )
         
@@ -705,7 +753,7 @@ def handle_menu_buttons(message):
             remaining = max(0, limit_val - used)
             bot.send_message(
                 chat_id, 
-                f"ဒီနေ့ Quota: <b>{used}/{limit_val}</b> သုံးထားတယ် — <b>{remaining}</b> ကျန်ပါသေးတယ်", 
+                f"ဒီနေ့ Quota (TV & Cookies): <b>{used}/{limit_val}</b> သုံးထားတယ် — <b>{remaining}</b> ကျန်ပါသေးတယ်", 
                 parse_mode="HTML"
             )
             
@@ -716,9 +764,45 @@ def handle_menu_buttons(message):
             f"📺 Netflix: <b>{stats['netflix']}</b> ခု\n"
             f"🟣 HBO Max: <b>{stats['hbo']}</b> ခု\n"
             f"📺 Prime Video: <b>{stats['prime']}</b> ခု\n"
-            f"🍥 Crunchyroll: <b>{stats['crunchyroll']}</b> ခု"
+            f"🍥 Crunchyroll: <b>{stats['crunchyroll']}</b> ခု\n\n"
+            f"🦚 Peacock (30 Days): <b>{stats['peacock30']}</b> ခု\n"
+            f"🦚 Peacock (1 Year): <b>{stats['peacock365']}</b> ခု"
         )
         bot.send_message(chat_id, msg_text, parse_mode="HTML")
+
+    elif text == "🎁 Get Quota (Peacock)":
+        user_data = get_user_peacock_data(str(user_id))
+        credits = user_data.get('peacock_credit') or 0
+        last_claim = user_data.get('last_daily_claim')
+        today = current_date()
+        
+        bonus_text = "❌ ယူပြီးပါပြီ"
+        if last_claim != today:
+            try:
+                supabase.table('users').update({'peacock_credit': credits + 10, 'last_daily_claim': today}).eq('user_id', str(user_id)).execute()
+                credits += 10
+                bonus_text = "✅ (ယနေ့အတွက် 10 မှတ် ရရှိပါပြီ)"
+            except Exception as e:
+                logger.error(f"Daily claim error: {e}")
+
+        bot_info = bot.get_me()
+        msg = (
+            f"🎁 <b>သင့်၏ Peacock Quota (Credit)</b>\n\n"
+            f"🌟 လက်ရှိ Credit: <b>{credits}</b> မှတ်\n"
+            f"📅 ယနေ့ Daily Bonus: {bonus_text}\n\n"
+            f"🔗 <b>Credit ထပ်မံရယူရန်:</b>\n"
+            f"သင့်သူငယ်ချင်းများကို ဖိတ်ခေါ်ပြီး Credit များ စုဆောင်းပါ။ (၁ ယောက်လျှင် ၁ မှတ်)\n\n"
+            f"👇 သင့်ဖိတ်ခေါ်လင့်ခ်:\n<code>https://t.me/{bot_info.username}?start={user_id}</code>"
+        )
+        bot.send_message(chat_id, msg, parse_mode="HTML")
+
+    elif text == "🦚 Peacock TV (Email:Pass)":
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("30 Days (11 Credits)", callback_data="buy_peacock_30"),
+            types.InlineKeyboardButton("1 Year (20 Credits)", callback_data="buy_peacock_365")
+        )
+        bot.send_message(chat_id, "🦚 <b>Peacock TV Premium</b>\n\nလိုချင်သည့် Plan ကို အောက်မှ ရွေးချယ်ပါ-", reply_markup=markup, parse_mode="HTML")
 
     elif text == "🌟 Get VIP 🌟":
         bot.send_message(
@@ -822,12 +906,14 @@ def handle_menu_buttons(message):
             types.InlineKeyboardButton("Netflix", callback_data="zip_netflix"), 
             types.InlineKeyboardButton("HBO", callback_data="zip_hbo"),
             types.InlineKeyboardButton("Prime Video", callback_data="zip_prime"), 
-            types.InlineKeyboardButton("Crunchyroll", callback_data="zip_crunchyroll")
+            types.InlineKeyboardButton("Crunchyroll", callback_data="zip_crunchyroll"),
+            types.InlineKeyboardButton("Peacock 30 Days", callback_data="zip_peacock30"),
+            types.InlineKeyboardButton("Peacock 1 Year", callback_data="zip_peacock365")
         )
         
         bot.send_message(
             chat_id, 
-            "📦 <b>ဘယ် Service အတွက် Cookie တွေ တင်မှာလဲ?</b>\nအောက်ကနေ အရင်ရွေးချယ်ပေးပါ:", 
+            "📦 <b>ဘယ် Service အတွက် ဖိုင်တွေ တင်မှာလဲ?</b>\nအောက်ကနေ အရင်ရွေးချယ်ပေးပါ:", 
             reply_markup=markup, 
             parse_mode="HTML"
         )
@@ -907,20 +993,62 @@ def handle_callback(call: types.CallbackQuery) -> None:
     if is_banned(user_id):
         return
 
-    # ZIP Upload Handling
+    # 📌 Peacock TV Account ဝယ်ယူခြင်း
+    if call.data.startswith("buy_peacock_"):
+        plan = "30days" if call.data == "buy_peacock_30" else "1year"
+        cost = 11 if plan == "30days" else 20
+        
+        user_data = get_user_peacock_data(str(user_id))
+        credits = user_data.get('peacock_credit') or 0
+        
+        if credits < cost:
+            bot.answer_callback_query(call.id, f"⚠️ Credit မလုံလောက်ပါ။ {cost} မှတ် လိုအပ်ပါသည်။ (လက်ရှိ: {credits})", show_alert=True)
+            return
+            
+        try:
+            res = supabase.table('peacock_accounts').select('id, email_pass').eq('plan_type', plan).limit(1).execute()
+            if not res.data:
+                bot.answer_callback_query(call.id, "⚠️ လောလောဆယ် အကောင့် ကုန်နေပါသည်။ Admin ကို ပြောပါ။", show_alert=True)
+                return
+                
+            acc_id = res.data[0]['id']
+            email_pass = res.data[0]['email_pass']
+            
+            # နုတ်မည် & အကောင့်ထုတ်ပေးမည်
+            supabase.table('peacock_accounts').delete().eq('id', acc_id).execute()
+            supabase.table('users').update({'peacock_credit': credits - cost}).eq('user_id', str(user_id)).execute()
+            
+            bot.edit_message_text(
+                chat_id=chat_id, 
+                message_id=call.message.message_id, 
+                text=f"🦚 <b>Peacock TV ({plan})</b>\n\n✅ ဝယ်ယူမှု အောင်မြင်ပါသည်။\n\n📧 Email:Pass 👇\n<code>{email_pass}</code>\n\n💳 လက်ကျန် Credit: <b>{credits - cost}</b>", 
+                parse_mode="HTML"
+            )
+            send_log_to_channel(call.from_user, f"Peacock {plan} အကောင့် ထုတ်ယူသွားပါသည်။")
+        except Exception as e:
+            bot.answer_callback_query(call.id, "⚠️ Error occurred.", show_alert=True)
+            logger.error(f"Peacock buy error: {e}")
+        return
+
+    # ZIP / TXT Upload Handling Menu
     if call.data.startswith("zip_"):
         if not is_admin(user_id):
             return
             
-        svc = call.data.split("_")[1]
+        svc = call.data.split("_")[1] # e.g. netflix, hbo, peacock30, peacock365
         
         with _pending_lock:
             _pending_upload_admins[user_id] = svc
             
+        if svc.startswith("peacock"):
+            upload_msg = f"📦 <b>{svc.upper()}</b> အတွက် `.zip`, `.txt` ဖိုင် (သို့မဟုတ်) <b>အကောင့်စာသားများကို</b> တိုက်ရိုက် ပို့ပေးပါ။\n(မတင်လိုပါက /cancel ဟု ရိုက်ထည့်ပါ)"
+        else:
+            upload_msg = f"📦 <b>{svc.upper()}</b> အတွက် `.zip` ဖိုင် ကို ပို့ပေးပါ။\n(မတင်လိုပါက /cancel ဟု ရိုက်ထည့်ပါ)"
+            
         bot.edit_message_text(
             chat_id=chat_id, 
             message_id=call.message.message_id, 
-            text=f"📦 <b>{svc.upper()}</b> အတွက် `.zip` ဖိုင်ကို ပို့ပေးပါ။\n(မတင်လိုပါက /cancel ဟု ရိုက်ထည့်ပါ)", 
+            text=upload_msg, 
             parse_mode="HTML"
         )
         return
@@ -1080,8 +1208,57 @@ def process_document_merged(message: types.Message):
     if svc_type and is_admin(user_id):
         document = message.document
         
+        # --- Peacock (Email:Pass) .txt သို့မဟုတ် .zip ဖိုင် အလွယ်တင်ရန် ---
+        if svc_type.startswith("peacock"):
+            plan = "30days" if svc_type == "peacock30" else "1year"
+            progress = bot.reply_to(message, f"📦 Peacock ({plan}) ဖိုင်ကို သွင်းနေပါသည်...")
+            try:
+                file_info = bot.get_file(document.file_id)
+                raw_data = bot.download_file(file_info.file_path)
+                
+                accounts_to_insert = []
+                # ZIP ဖိုင်ဖြစ်လျှင် 
+                if document.file_name.lower().endswith(".zip"):
+                    with zip_lib.ZipFile(io.BytesIO(raw_data)) as z:
+                        for file_info_z in z.infolist():
+                            if file_info_z.filename.lower().endswith('.txt') and not file_info_z.is_dir():
+                                content = z.read(file_info_z.filename).decode('utf-8', errors='ignore')
+                                for acc in content.strip().split('\n'):
+                                    if acc.strip():
+                                        accounts_to_insert.append({'email_pass': acc.strip(), 'plan_type': plan})
+                # TXT ဖိုင်ဖြစ်လျှင် (ပိုလွယ်ကူရန်)
+                elif document.file_name.lower().endswith(".txt"):
+                    content = raw_data.decode('utf-8', errors='ignore')
+                    for acc in content.strip().split('\n'):
+                        if acc.strip():
+                            accounts_to_insert.append({'email_pass': acc.strip(), 'plan_type': plan})
+                else:
+                    bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text="❌ .zip သို့မဟုတ် .txt ဖိုင်အမျိုးအစားသာ လက်ခံပါသည်။")
+                    return
+                
+                if not accounts_to_insert:
+                    bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text="❌ ဖိုင်ထဲတွင် အကောင့်များ မတွေ့ပါ။")
+                    return
+                    
+                for i in range(0, len(accounts_to_insert), 500):
+                    supabase.table('peacock_accounts').insert(accounts_to_insert[i:i + 500]).execute()
+                    
+                with _pending_lock:
+                    _pending_upload_admins.pop(user_id, None)
+                    
+                bot.edit_message_text(
+                    chat_id=user_id, 
+                    message_id=progress.message_id, 
+                    text=f"✅ <b>ဖိုင် ဖြေပြီးပါပြီ။ (Peacock {plan})</b>\n\n▪️ ထည့်သွင်းလိုက်သော အရေအတွက်: <b>{len(accounts_to_insert)}</b> ခု", 
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error: {html.escape(str(e))}")
+            return
+        # ---------------------------------------------------------------
+        
         if not document.file_name.lower().endswith(".zip"):
-            bot.reply_to(message, "❌ .zip ဖိုင်အမျိုးအစားသာ လက်ခံပါသည်။")
+            bot.reply_to(message, "❌ Cookies အတွက် .zip ဖိုင်အမျိုးအစားသာ လက်ခံပါသည်။")
             return
             
         progress = bot.reply_to(message, f"📦 {svc_type.upper()} ZIP ဖိုင်ကို Supabase ထဲသို့ သွင်းနေပါသည်...")
@@ -1145,7 +1322,7 @@ def handle_text_merged(message: types.Message):
                     _pending_upload_admins.pop(message.chat.id)
                     bot.reply_to(
                         message, 
-                        "❌ ZIP တင်ခြင်းကို ပယ်ဖျက်လိုက်ပါပြီ။", 
+                        "❌ တင်ခြင်းကို ပယ်ဖျက်လိုက်ပါပြီ။", 
                         reply_markup=get_main_menu(message.chat.id)
                     )
                 elif message.chat.id in awaiting_broadcast:
@@ -1163,7 +1340,42 @@ def handle_text_merged(message: types.Message):
     if is_banned(user_id) or not check_bot_open(message):
         return
 
-    # 📌 Broadcast State ကို ဤနေရာတွင် တိုက်ရိုက်ဖမ်းယူပါသည်
+    # 📌 1. Admin မှ Peacock အကောင့်များကို Text အနေဖြင့် တိုက်ရိုက်တင်ခြင်း
+    with _pending_lock:
+        svc_type = _pending_upload_admins.get(user_id)
+        
+    if svc_type and is_admin(user_id) and svc_type.startswith("peacock"):
+        plan = "30days" if svc_type == "peacock30" else "1year"
+        progress = bot.reply_to(message, f"📦 Peacock ({plan}) အကောင့်များကို သွင်းနေပါသည်...")
+        try:
+            content = message.text
+            accounts_to_insert = []
+            for acc in content.strip().split('\n'):
+                if acc.strip():
+                    accounts_to_insert.append({'email_pass': acc.strip(), 'plan_type': plan})
+            
+            if not accounts_to_insert:
+                bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text="❌ စာသားထဲတွင် အကောင့်များ မတွေ့ပါ။")
+                return
+                
+            for i in range(0, len(accounts_to_insert), 500):
+                supabase.table('peacock_accounts').insert(accounts_to_insert[i:i + 500]).execute()
+                
+            with _pending_lock:
+                _pending_upload_admins.pop(user_id, None)
+                
+            bot.edit_message_text(
+                chat_id=user_id, 
+                message_id=progress.message_id, 
+                text=f"✅ <b>စာသားမှတစ်ဆင့် အကောင့်များ သွင်းပြီးပါပြီ။ (Peacock {plan})</b>\n\n▪️ ထည့်သွင်းလိုက်သော အရေအတွက်: <b>{len(accounts_to_insert)}</b> ခု", 
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            bot.edit_message_text(chat_id=user_id, message_id=progress.message_id, text=f"❌ Error: {html.escape(str(e))}")
+        return
+    # ---------------------------------------------------------------
+
+    # 📌 2. Broadcast State ကို ဤနေရာတွင် တိုက်ရိုက်ဖမ်းယူပါသည်
     if chat_id == ADMIN_ID and awaiting_broadcast.get(chat_id):
         awaiting_broadcast[chat_id] = False
         sent, failed = 0, 0
@@ -1181,6 +1393,7 @@ def handle_text_merged(message: types.Message):
         )
         return
 
+    # 📌 3. အခြား Text များဆိုလျှင် Netflix Cookie မှ Token ပြောင်းသည့် လုပ်ငန်းစဉ်သို့ သွားမည်
     progress_msg = bot.reply_to(message, "စာသားရပြီ - Token ပြောင်းနေပါပြီ ခဏစောင့်ပါ...")
     
     def text_task():
