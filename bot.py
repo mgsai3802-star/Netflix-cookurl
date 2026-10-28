@@ -1071,7 +1071,7 @@ def handle_callback(call: types.CallbackQuery) -> None:
             
             msg_text = (
                 f"🦚 <b>Peacock TV Private Account({plan})</b>\n\n"
-                f"✅ အောင်မြင်ပါသည်။\n\n"
+                f"✅ အောင်မြင်ပါသည်။ OTP or Code လိုအပ်လျှင်👉@mailtemp36bot👈ဤ botတွင် Check boxလုပ်နိုင်ပါတယ်။\n\n"
                 f"{acc_text}\n\n"
                 f"💳 လက်ကျန် Credit: <b>{rem_credit}</b>\n\n"
                 f"⚠️ <b>သတိပြုရန်:</b> အသုံးပြုရန် VPN ကို <b>United States (US 🇺🇸)</b> သို့ ချိတ်ဆက်ထားရန် လိုအပ်ပါသည်။"
